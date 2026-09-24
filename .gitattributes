@@ -1,0 +1,8 @@
+# 统一文本换行
+* text=auto
+
+# Office 文件按二进制处理，避免被改动换行
+*.xlsx binary
+*.xlsm binary
+*.xls  binary
+*.csv  text eol=crlf
