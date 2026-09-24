@@ -19,8 +19,7 @@ TIER_MIN = {"基础": 1, "初级": 5, "中级": 20, "上级": 35, "最上级": 4
 TIER_NAME = {"基础": "基本职", "初级": "初级职", "中级": "中级职", "上级": "上级职", "最上级": "最上级职", "神将": "神将职"}
 # 已知的精通被动属性加成（数据源没有结构化字段，按玩家反馈补充）
 MASTERY = {"天翼兵": ("魔防", 3)}
-# 自动推荐默认「靠后」/「不参与」的职业
-LOW = {"舞者", "神乐神将"}
+# 自动推荐默认不勾选的职业
 OFF = {"战象兵"}
 NORM = [("箭术", "弓术"), ("黑魔术", "黑魔法"), ("白魔术", "白魔法")]
 REQ_KEYS = ["剑术", "枪术", "斧术", "弓术", "格斗术", "黑魔法", "白魔法", "马术", "重装术", "飞行术"]
@@ -128,7 +127,7 @@ def import_classes(ws):
         main, sel = parse_req(cond) if cond not in ("", "--") else ("—", "—")
         use = "・".join(k for k, c in zip(USE_KEYS, range(34, 45)) if clean(g(c)) == "〇")
         mb = MASTERY.get(name, ("", ""))
-        avail = "靠后" if name in LOW else "否" if name in OFF else "是"
+        avail = "否" if name in OFF else "是"
         rows.append([str(len(rows) + 1), TIER_NAME.get(tier, tier), name, str(min_lv), restrict]
                     + [clean(g(c)) for c in range(8, 17)] + [mb[0], str(mb[1])]
                     + [clean(g(c)) for c in range(18, 27)]

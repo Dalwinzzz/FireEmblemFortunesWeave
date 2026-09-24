@@ -417,7 +417,7 @@ def build_main(wb, char_cols, class_cols, class_defaults):
                 f'+IF(AND({fr}=1,{EN["matk"]}<>""),({F[I_RES]}>={EN["matk"]}-5)*1,0)')
 
     def score(ok, low, met, short, total, cmb, F, i):
-        # 排序：达成项 > 实战评估 > 不含靠后职业 > 缺口 > 力或魔 > 属性总和（熟练度只作提示，不参与排序）；
+        # 排序：达成项 > 实战评估 > （low 恒为0，保留位）> 缺口 > 力或魔 > 属性总和（熟练度只作提示，不参与排序）；
         # 量级控制在 14 位有效数字内（LibreOffice 只保留 15 位），否则区分并列用的小数会丢失
         atk = f"IF({ref('typeMag')}=1,{F[I_MAG]},{F[I_STR]})"
         return (f"=IF({ok},{met}*1E+9+{cmb}*1E+8+({low}=0)*1E+7"
@@ -702,16 +702,16 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         nm, mn, av = f"${CLS['name']}{r}", f"${CLS['min']}{r}", f"${CLS['avail']}{r}"
         H(f"{CLS['name']}{r}", f'=IF({CLASS_Q}!$C{cr}="","",{CLASS_Q}!$C{cr})')
         H(f"{CLS['min']}{r}", f"=N({CLASS_Q}!$D{cr})")
-        # 参与推荐：⑧勾选格（✓/靠后）+ 所属系列已勾选 + 性别/角色限定
-        mark = f"${grid_cell(i, 'mark')[0]}${grid_cell(i, 'mark')[1:]}" if i < C_ROWS * C_GROUPS else '"✗"'
-        H(f"{CLS['avail']}{r}", f'={mark}&""')
-        H(f"{CLS['low']}{r}", f'=IF({av}="靠后",1,0)')
+        # 参与推荐：⑧复选框已勾选 + 所属系列已勾选 + 性别/角色限定
+        mark = f"${grid_cell(i, 'mark')[0]}${grid_cell(i, 'mark')[1:]}" if i < C_ROWS * C_GROUPS else "FALSE"
+        H(f"{CLS['avail']}{r}", f"=({mark}=TRUE)")
+        H(f"{CLS['low']}{r}", "=0")
         feat = f"{CLASS_Q}!${C_FEAT}{cr}"
         rs_ = f"{CLASS_Q}!${C_RESTR}{cr}"
-        series_ok = ",".join(f'NOT(AND(ISNUMBER(SEARCH("{sr}",{feat})),${SERIES_MARK_COL}${R_C0 + k}<>"✓"))'
+        series_ok = ",".join(f'NOT(AND(ISNUMBER(SEARCH("{sr}",{feat})),${SERIES_MARK_COL}${R_C0 + k}<>TRUE))'
                              for k, sr in enumerate(SERIES))
         g_ = ref("gender")
-        H(f"{CLS['ok']}{r}", (f'=AND(OR({av}="✓",{av}="靠后"),{series_ok},'
+        H(f"{CLS['ok']}{r}", (f'=AND({av},{series_ok},'
                               f'OR({rs_}="",{rs_}={ref("charName")},AND({rs_}="女",OR({g_}="女",{g_}="自选")),'
                               f'AND({rs_}="男",OR({g_}="男",{g_}="自选"))))'))
         for j in range(NS):
@@ -922,7 +922,7 @@ def build_main(wb, char_cols, class_cols, class_defaults):
 
     cn_ = ref("combatN")
     for block, (rsec, rhdr, r0, title) in enumerate(
-            ((R_BSEC, R_BHDR, R_B0, "③ 推荐路线 Top5（每个区间一个职业；排序：达成项 ＞ 实战评估 ＞ 不含靠后职业 ＞ 缺口小 ＞ 力/魔高 ＞ 属性总和；属性含精通加成；熟练度仅提示）"),
+            ((R_BSEC, R_BHDR, R_B0, "③ 推荐路线 Top5（每个区间一个职业；排序：达成项 ＞ 实战评估 ＞ 缺口小 ＞ 力/魔高 ＞ 属性总和；属性含精通加成；熟练度仅提示）"),
              (R_OSEC, R_OHDR, R_O0, "③+ 中途换职优化 Top5（在推荐1的某个区间中途再换一次职业，枚举换哪个职业、第几级换）"))):
         section(ws, rsec, title, LAST_VIS)
         header(ws, rhdr, ["方案", "达成项", "缺口合计"] + STATS + ["路线（LvX 职业 = 从该等级起在此职业升级）", "熟练度/精通", "实战评估 / 备注"])
@@ -1174,14 +1174,16 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         ws.row_dimensions[r].height = 30
 
     # ⑧ 自动推荐候选职业（勾选）
-    section(ws, R_CSEC, "⑧ 自动推荐候选职业：✓=参与，靠后=参与但排后，✗/留空=不参与（起点/目标职业不受限制）；右侧可按系一键开关", LAST_VIS)
+    section(ws, R_CSEC, "", LAST_VIS)
+    ws[f"A{R_CSEC}"] = (f'="⑧ 自动推荐候选职业：勾选=参与计算，点一下即可勾选/取消（起点/目标职业不受限制）；右侧可按系一键开关'
+                        f'　｜当前参与推荐："&COUNTIF({rng(CLS["ok"], H0, CLS_LAST)},TRUE)&" 个职业（已计入系列开关与性别/角色限定）"')
     for g in range(C_GROUPS):
         header(ws, R_CHDR, ["职业", "参与"], start_col=ws[f"{GRID_NAME_COLS[g]}1"].column)
         if GRID_NAME_COLS[g] in ("E", "H"):
             nxt = CL(ws[f"{GRID_NAME_COLS[g]}1"].column + 1)
             ws.merge_cells(f"{GRID_NAME_COLS[g]}{R_CHDR}:{nxt}{R_CHDR}")
             header(ws, R_CHDR, ["参与"], start_col=ws[f"{GRID_MARK_COLS[g]}1"].column)
-    default_mark = {"是": "✓", "靠后": "靠后", "否": "✗"}
+    checkbox_cells = []
     for i in range(C_ROWS * C_GROUPS):
         nc, mc = grid_cell(i, "name"), grid_cell(i, "mark")
         col, row_ = nc[0], int(nc[1:])
@@ -1191,7 +1193,9 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         ws[nc].font = f_base
         ws[nc].alignment = left_nowrap
         ws[nc].border = border
-        ws[mc] = default_mark.get(class_defaults[i][1], "✓") if i < len(class_defaults) else None
+        if i < len(class_defaults):
+            ws[mc] = class_defaults[i][1] != "否"
+            checkbox_cells.append(mc)
         style_range(ws, f"{mc}:{mc}", font=f_input, fill=fill_input, align=center)
     header(ws, R_CHDR, ["系列", "开关"], start_col=ws[f"{SERIES_NAME_COL}1"].column)
     ws.merge_cells(f"N{R_CHDR}:{LAST_VIS}{R_CHDR}")
@@ -1202,10 +1206,11 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         ws[f"{SERIES_NAME_COL}{r}"].font = f_bold
         ws[f"{SERIES_NAME_COL}{r}"].alignment = center
         ws[f"{SERIES_NAME_COL}{r}"].border = border
-        ws[f"{SERIES_MARK_COL}{r}"] = "✓"
+        ws[f"{SERIES_MARK_COL}{r}"] = True
+        checkbox_cells.append(f"{SERIES_MARK_COL}{r}")
         style_range(ws, f"{SERIES_MARK_COL}{r}:{SERIES_MARK_COL}{r}", font=f_input, fill=fill_input, align=center)
-    notes_c = ["系列开关=✗ 时，该系所有职业都不参与（按职业表「兵种特性」判断）",
-               "例：只想走猎兵系，就把其他系设为 ✗；想排除斗拳手→弓箭手这类跨系路线同理",
+    notes_c = ["系列不勾选时，该系所有职业都不参与（按职业表「兵种特性」判断）；每次勾选变化都会全表重算",
+               "例：只想走猎兵系，就取消其他系；想排除斗拳手→弓箭手这类跨系路线同理（旧版 Excel/WPS 显示为 TRUE/FALSE，直接改写即可）",
                "平民/贵族不属于任何系，只受单个勾选控制",
                "女性专用/角色限定职业会按所选角色自动排除",
                "表内职业名 = 阶级·兵种名，顺序同「职业」表"]
@@ -1287,8 +1292,8 @@ def build_main(wb, char_cols, class_cols, class_defaults):
     cf.add(er, FormulaRule(formula=[f'ISNUMBER(SEARCH("✗",B{R_E0 + 1}))'], fill=yellow, font=yfont))
     for i in range(C_ROWS * C_GROUPS):
         mc = grid_cell(i, "mark")
-        cf.add(mc, FormulaRule(formula=[f'{mc}="✓"'], fill=green, font=gfont))
-        cf.add(mc, FormulaRule(formula=[f'OR({mc}="✗",{mc}="")'], fill=PatternFill("solid", fgColor="EDEDED"),
+        cf.add(mc, FormulaRule(formula=[f'{mc}=TRUE'], fill=green, font=gfont))
+        cf.add(mc, FormulaRule(formula=[f'{mc}<>TRUE'], fill=PatternFill("solid", fgColor="EDEDED"),
                                font=Font(color="7F7F7F")))
     for r0 in (R_B0, R_O0):
         cf.add(f"D{r0}:L{r0 + 4}", FormulaRule(
@@ -1312,10 +1317,8 @@ def build_main(wb, char_cols, class_cols, class_defaults):
     dv_front = DataValidation(type="list", formula1='"自动,是,否"')
     dv_num = DataValidation(type="whole", operator="between", formula1="0", formula2="999", allow_blank=True)
     dv_yes = DataValidation(type="list", formula1='"是,否"')
-    dv_mark = DataValidation(type="list", formula1='"✓,靠后,✗"', allow_blank=True)
-    dv_series = DataValidation(type="list", formula1='"✓,✗"')
     for dv in (dv_char, dv_class, dv_route, dv_lv, dv_acc, dv_rank, dv_type, dv_speed, dv_front, dv_num,
-               dv_yes, dv_mark, dv_series):
+               dv_yes):
         ws.add_data_validation(dv)
     dv_char.add("B4")
     dv_class.add("C9:C10")
@@ -1335,25 +1338,81 @@ def build_main(wb, char_cols, class_cols, class_defaults):
     dv_num.add(f"C{R_E0}")
     dv_num.add(f"E{R_E0}")
     dv_yes.add("O12")
-    for i in range(C_ROWS * C_GROUPS):
-        dv_mark.add(grid_cell(i, "mark"))
-    dv_series.add(f"{SERIES_MARK_COL}{R_C0}:{SERIES_MARK_COL}{R_C0 + len(SERIES) - 1}")
 
     ws.freeze_panes = "A7"
     ws.column_dimensions.group("Q", CL(LAST_HELPER), hidden=True)
     for name, r_ in defnames.items():
         wb.defined_names[name] = DefinedName(name, attr_text=f"'{SH_MAIN}'!{r_}")
-    return ws
+    return checkbox_cells
+
+
+FPB_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+           '<FeaturePropertyBags xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag">'
+           '<bag type="Checkbox"/><bag type="XFControls"><bagId k="CellControl">0</bagId></bag>'
+           '<bag type="XFComplement"><bagId k="XFControls">1</bagId></bag>'
+           '<bag type="XFComplements" extRef="XFComplementsMapperExtRef"><a k="MappedFeaturePropertyBags">'
+           '<bagId>2</bagId></a></bag></FeaturePropertyBags>')
+XF_EXT = ('<extLst><ext uri="{C7286773-470A-42A8-94C5-96B5CB345126}" '
+          'xmlns:xfpb="http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag">'
+          '<xfpb:xfComplement i="0"/></ext></extLst>')
+
+
+def add_cell_checkboxes(path, cells):
+    """把主页面指定的布尔单元格变成 Excel（Microsoft 365）原生单元格复选框。
+    格式与 Excel / XlsxWriter 的 insert_checkbox 输出一致；不支持的软件里显示为 TRUE/FALSE。"""
+    import re
+    import shutil
+    import zipfile
+    tmp = path + ".tmp"
+    with zipfile.ZipFile(path) as zin:
+        parts = {n: zin.read(n) for n in zin.namelist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    sx = parts[sheet].decode("utf-8")
+    styles = parts["xl/styles.xml"].decode("utf-8")
+    m = re.search(r'<cellXfs count="(\d+)">(.*?)</cellXfs>', styles, re.S)
+    xfs = re.findall(r"<xf\b[^>]*/>|<xf\b[^>]*>.*?</xf>", m.group(2), re.S)
+    new_idx = {}
+    for ref in cells:
+        cm = re.search(rf'<c r="{ref}"( s="(\d+)")?( t="b")?>', sx)
+        assert cm and cm.group(3), f"复选框单元格 {ref} 不是布尔值"
+        s_old = int(cm.group(2) or 0)
+        if s_old not in new_idx:
+            base = xfs[s_old]
+            base = base[:-2] + ">" + XF_EXT + "</xf>" if base.endswith("/>") else base.replace("</xf>", XF_EXT + "</xf>")
+            new_idx[s_old] = len(xfs)
+            xfs.append(base)
+        sx = sx.replace(cm.group(0), f'<c r="{ref}" s="{new_idx[s_old]}" t="b">', 1)
+    styles = styles[:m.start()] + f'<cellXfs count="{len(xfs)}">' + "".join(xfs) + "</cellXfs>" + styles[m.end():]
+    parts[sheet] = sx.encode("utf-8")
+    parts["xl/styles.xml"] = styles.encode("utf-8")
+    parts["xl/featurePropertyBag/featurePropertyBag.xml"] = FPB_XML.encode("utf-8")
+    ct = parts["[Content_Types].xml"].decode("utf-8")
+    ct = ct.replace("</Types>", '<Override PartName="/xl/featurePropertyBag/featurePropertyBag.xml" '
+                                'ContentType="application/vnd.ms-excel.featurepropertybag+xml"/></Types>')
+    parts["[Content_Types].xml"] = ct.encode("utf-8")
+    rels = parts["xl/_rels/workbook.xml.rels"].decode("utf-8")
+    rels = rels.replace("</Relationships>", '<Relationship Id="rIdFpb1" '
+                        'Type="http://schemas.microsoft.com/office/2022/11/relationships/FeaturePropertyBag" '
+                        'Target="featurePropertyBag/featurePropertyBag.xml"/></Relationships>')
+    parts["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for n, data in parts.items():
+            zout.writestr(n, data)
+    shutil.move(tmp, path)
 
 
 def main():
     wb = Workbook()  # 默认第一个 sheet 作为主页面
     n_char, char_cols = build_char_sheet(wb)
     n_class, class_cols, class_defaults = build_class_sheet(wb)
-    build_main(wb, char_cols, class_cols, class_defaults)
+    checkbox_cells = build_main(wb, char_cols, class_cols, class_defaults)
+    # 自动计算 + 每次改动都全表重算（勾选/输入变化后结果立即更新）
+    wb.calculation.calcMode = "auto"
     wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     wb.save(OUT)
+    add_cell_checkboxes(OUT, checkbox_cells)
     print(f"saved {OUT}: {n_char} 角色, {n_class} 职业")
 
 
