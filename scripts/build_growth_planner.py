@@ -1175,7 +1175,7 @@ def build_main(wb, char_cols, class_cols, class_defaults):
 
     # ⑧ 自动推荐候选职业（勾选）
     section(ws, R_CSEC, "", LAST_VIS)
-    ws[f"A{R_CSEC}"] = (f'="⑧ 自动推荐候选职业：勾选=参与计算，点一下即可勾选/取消（起点/目标职业不受限制）；右侧可按系一键开关'
+    ws[f"A{R_CSEC}"] = (f'="⑧ 自动推荐候选职业：点复选框勾选/取消，勾选=参与计算，绿底=已勾选、灰底=未勾选（起点/目标职业不受限制）；右侧可按系一键开关'
                         f'　｜当前参与推荐："&COUNTIF({rng(CLS["ok"], H0, CLS_LAST)},TRUE)&" 个职业（已计入系列开关与性别/角色限定）"')
     for g in range(C_GROUPS):
         header(ws, R_CHDR, ["职业", "参与"], start_col=ws[f"{GRID_NAME_COLS[g]}1"].column)
@@ -1196,7 +1196,7 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         if i < len(class_defaults):
             ws[mc] = class_defaults[i][1] != "否"
             checkbox_cells.append(mc)
-        style_range(ws, f"{mc}:{mc}", font=f_input, fill=fill_input, align=center)
+        style_range(ws, f"{mc}:{mc}", font=Font(name=FONT, size=10, color="FFF2CC"), fill=fill_input, align=center)
     header(ws, R_CHDR, ["系列", "开关"], start_col=ws[f"{SERIES_NAME_COL}1"].column)
     ws.merge_cells(f"N{R_CHDR}:{LAST_VIS}{R_CHDR}")
     header(ws, R_CHDR, ["说明"], start_col=14)
@@ -1208,9 +1208,10 @@ def build_main(wb, char_cols, class_cols, class_defaults):
         ws[f"{SERIES_NAME_COL}{r}"].border = border
         ws[f"{SERIES_MARK_COL}{r}"] = True
         checkbox_cells.append(f"{SERIES_MARK_COL}{r}")
-        style_range(ws, f"{SERIES_MARK_COL}{r}:{SERIES_MARK_COL}{r}", font=f_input, fill=fill_input, align=center)
+        style_range(ws, f"{SERIES_MARK_COL}{r}:{SERIES_MARK_COL}{r}", font=Font(name=FONT, size=10, color="FFF2CC"),
+                    fill=fill_input, align=center)
     notes_c = ["系列不勾选时，该系所有职业都不参与（按职业表「兵种特性」判断）；每次勾选变化都会全表重算",
-               "例：只想走猎兵系，就取消其他系；想排除斗拳手→弓箭手这类跨系路线同理（旧版 Excel/WPS 显示为 TRUE/FALSE，直接改写即可）",
+               "例：只想走猎兵系，就取消其他系；想排除斗拳手→弓箭手这类跨系路线同理（若软件不显示复选框，可直接在格子里输入 TRUE/FALSE）",
                "平民/贵族不属于任何系，只受单个勾选控制",
                "女性专用/角色限定职业会按所选角色自动排除",
                "表内职业名 = 阶级·兵种名，顺序同「职业」表"]
@@ -1292,9 +1293,14 @@ def build_main(wb, char_cols, class_cols, class_defaults):
     cf.add(er, FormulaRule(formula=[f'ISNUMBER(SEARCH("✗",B{R_E0 + 1}))'], fill=yellow, font=yfont))
     for i in range(C_ROWS * C_GROUPS):
         mc = grid_cell(i, "mark")
-        cf.add(mc, FormulaRule(formula=[f'{mc}=TRUE'], fill=green, font=gfont))
+        cf.add(mc, FormulaRule(formula=[f'{mc}=TRUE'], fill=green, font=Font(color="C6EFCE")))
         cf.add(mc, FormulaRule(formula=[f'{mc}<>TRUE'], fill=PatternFill("solid", fgColor="EDEDED"),
-                               font=Font(color="7F7F7F")))
+                               font=Font(color="EDEDED")))
+    for k in range(len(SERIES)):
+        mc = f"{SERIES_MARK_COL}{R_C0 + k}"
+        cf.add(mc, FormulaRule(formula=[f'{mc}=TRUE'], fill=green, font=Font(color="C6EFCE")))
+        cf.add(mc, FormulaRule(formula=[f'{mc}<>TRUE'], fill=PatternFill("solid", fgColor="EDEDED"),
+                               font=Font(color="EDEDED")))
     for r0 in (R_B0, R_O0):
         cf.add(f"D{r0}:L{r0 + 4}", FormulaRule(
             formula=[f'AND(D$10<>"",ISNUMBER(D{r0}),D{r0}<D$10)'], fill=red, font=Font(color="9C0006")))
@@ -1346,58 +1352,69 @@ def build_main(wb, char_cols, class_cols, class_defaults):
     return checkbox_cells
 
 
-FPB_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-           '<FeaturePropertyBags xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag">'
-           '<bag type="Checkbox"/><bag type="XFControls"><bagId k="CellControl">0</bagId></bag>'
-           '<bag type="XFComplement"><bagId k="XFControls">1</bagId></bag>'
-           '<bag type="XFComplements" extRef="XFComplementsMapperExtRef"><a k="MappedFeaturePropertyBags">'
-           '<bagId>2</bagId></a></bag></FeaturePropertyBags>')
-XF_EXT = ('<extLst><ext uri="{C7286773-470A-42A8-94C5-96B5CB345126}" '
-          'xmlns:xfpb="http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag">'
-          '<xfpb:xfComplement i="0"/></ext></extLst>')
+VML_HEAD = ('<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" '
+            'xmlns:x="urn:schemas-microsoft-com:office:excel">'
+            '<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout>'
+            '<v:shapetype id="_x0000_t201" coordsize="21600,21600" o:spt="201" path="m,l,21600r21600,l21600,xe">'
+            '<v:stroke joinstyle="miter"/><v:path shadowok="f" o:extrusionok="f" strokeok="f" fillok="f" '
+            'o:connecttype="rect"/><o:lock v:ext="edit" shapetype="t"/></v:shapetype>')
+VML_SHAPE = ('<v:shape id="_x0000_s{sid}" type="#_x0000_t201" style="position:absolute;z-index:{z};visibility:visible" '
+             'filled="f" stroked="f" o:insetmode="auto"><v:path shadowok="t" strokeok="t" fillok="t"/>'
+             '<o:lock v:ext="edit" rotation="t"/><v:textbox style="mso-direction-alt:auto" o:singleclick="f">'
+             '<div style="text-align:left"></div></v:textbox>'
+             '<x:ClientData ObjectType="Checkbox"><x:Anchor>{anchor}</x:Anchor><x:AutoFill>False</x:AutoFill>'
+             '<x:AutoLine>False</x:AutoLine><x:TextVAlign>Center</x:TextVAlign><x:FmlaLink>${col}${row}</x:FmlaLink>'
+             '{checked}<x:NoThreeD/></x:ClientData></v:shape>')
 
 
-def add_cell_checkboxes(path, cells):
-    """把主页面指定的布尔单元格变成 Excel（Microsoft 365）原生单元格复选框。
-    格式与 Excel / XlsxWriter 的 insert_checkbox 输出一致；不支持的软件里显示为 TRUE/FALSE。"""
+def add_form_checkboxes(path, cells, col_widths):
+    """在主页面的布尔单元格上叠加「表单控件」复选框（传统 VML 控件，Excel 2007+/Mac/WPS 均支持），
+    复选框链接到所在单元格：点一下即写入 TRUE/FALSE，公式直接读取该单元格。"""
     import re
     import shutil
     import zipfile
+    from openpyxl.utils import column_index_from_string
     tmp = path + ".tmp"
     with zipfile.ZipFile(path) as zin:
         parts = {n: zin.read(n) for n in zin.namelist()}
     sheet = "xl/worksheets/sheet1.xml"
     sx = parts[sheet].decode("utf-8")
-    styles = parts["xl/styles.xml"].decode("utf-8")
-    m = re.search(r'<cellXfs count="(\d+)">(.*?)</cellXfs>', styles, re.S)
-    xfs = re.findall(r"<xf\b[^>]*/>|<xf\b[^>]*>.*?</xf>", m.group(2), re.S)
-    new_idx = {}
-    for ref in cells:
-        cm = re.search(rf'<c r="{ref}"( s="(\d+)")?( t="b")?>', sx)
-        assert cm and cm.group(3), f"复选框单元格 {ref} 不是布尔值"
-        s_old = int(cm.group(2) or 0)
-        if s_old not in new_idx:
-            base = xfs[s_old]
-            base = base[:-2] + ">" + XF_EXT + "</xf>" if base.endswith("/>") else base.replace("</xf>", XF_EXT + "</xf>")
-            new_idx[s_old] = len(xfs)
-            xfs.append(base)
-        sx = sx.replace(cm.group(0), f'<c r="{ref}" s="{new_idx[s_old]}" t="b">', 1)
-    styles = styles[:m.start()] + f'<cellXfs count="{len(xfs)}">' + "".join(xfs) + "</cellXfs>" + styles[m.end():]
+    shapes = []
+    for i, ref in enumerate(cells):
+        m = re.match(r"([A-Z]+)(\d+)$", ref)
+        col, row = m.group(1), int(m.group(2))
+        cm = re.search(rf'<c r="{ref}"[^>]*t="b"[^>]*><v>(\d)</v>', sx)
+        checked = "<x:Checked>1</x:Checked>" if cm and cm.group(1) == "1" else ""
+        width_px = int(col_widths.get(col, 8.43) * 7 + 5)
+        left = max(2, width_px // 2 - 9)
+        c0, r0 = column_index_from_string(col) - 1, row - 1
+        anchor = f"{c0}, {left}, {r0}, 1, {c0}, {left + 18}, {r0}, 19"
+        shapes.append(VML_SHAPE.format(sid=1025 + i, z=i + 1, anchor=anchor, col=col, row=row, checked=checked))
+    parts["xl/drawings/vmlDrawing1.vml"] = (VML_HEAD + "".join(shapes) + "</xml>").encode("utf-8")
+    if 'xmlns:r=' not in sx[:500]:
+        sx = sx.replace('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+                        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">', 1)
+    assert "<legacyDrawing" not in sx and "<tableParts" not in sx and "<extLst" not in sx.split("</sheetData>")[-1]
+    sx = sx.replace("</worksheet>", '<legacyDrawing r:id="rIdVml1"/></worksheet>')
     parts[sheet] = sx.encode("utf-8")
-    parts["xl/styles.xml"] = styles.encode("utf-8")
-    parts["xl/featurePropertyBag/featurePropertyBag.xml"] = FPB_XML.encode("utf-8")
+    rels_name = "xl/worksheets/_rels/sheet1.xml.rels"
+    rel = ('<Relationship Id="rIdVml1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'
+           'vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>')
+    if rels_name in parts:
+        parts[rels_name] = parts[rels_name].decode("utf-8").replace("</Relationships>", rel + "</Relationships>").encode("utf-8")
+    else:
+        parts[rels_name] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships '
+                            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                            + rel + "</Relationships>").encode("utf-8")
     ct = parts["[Content_Types].xml"].decode("utf-8")
-    ct = ct.replace("</Types>", '<Override PartName="/xl/featurePropertyBag/featurePropertyBag.xml" '
-                                'ContentType="application/vnd.ms-excel.featurepropertybag+xml"/></Types>')
+    if 'Extension="vml"' not in ct:
+        ct = ct.replace("<Default ", '<Default Extension="vml" '
+                        'ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/><Default ', 1)
     parts["[Content_Types].xml"] = ct.encode("utf-8")
-    rels = parts["xl/_rels/workbook.xml.rels"].decode("utf-8")
-    rels = rels.replace("</Relationships>", '<Relationship Id="rIdFpb1" '
-                        'Type="http://schemas.microsoft.com/office/2022/11/relationships/FeaturePropertyBag" '
-                        'Target="featurePropertyBag/featurePropertyBag.xml"/></Relationships>')
-    parts["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for n, data in parts.items():
-            zout.writestr(n, data)
+        for n in ["[Content_Types].xml"] + [n for n in parts if n != "[Content_Types].xml"]:
+            zout.writestr(n, parts[n])
     shutil.move(tmp, path)
 
 
@@ -1412,7 +1429,7 @@ def main():
     wb.calculation.forceFullCalc = True
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     wb.save(OUT)
-    add_cell_checkboxes(OUT, checkbox_cells)
+    add_form_checkboxes(OUT, checkbox_cells, {"B": 10, "D": 8, "G": 8, "J": 8, "M": 50})
     print(f"saved {OUT}: {n_char} 角色, {n_class} 职业")
 
 
