@@ -26,3 +26,7 @@
 
 本项目为玩家自制的非官方工具，与任天堂（Nintendo）及 Intelligent Systems 无关。
 游戏名称、角色及相关数据的版权归原权利人所有。
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
