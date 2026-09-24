@@ -13,6 +13,7 @@ from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter as CL
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.workbook.defined_name import DefinedName
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "tools", "固定成长养成规划器.xlsx")
@@ -120,7 +121,7 @@ def build_data_sheet(ws, title, hdr, rows, front, growth_cols, extra_formula=Non
                 v = extra_formula(r)
             else:
                 v = row[idx[h]] if h in idx else ""
-                v = num(v) if h in growth_cols or h in ("序号", "最低转职等级", "移动力") else v
+                v = num(v) if h in growth_cols or h in ("序号", "最低转职等级", "移动力", "精通加成值") else v
                 if v == "":
                     v = None
             cell = ws.cell(r, c, v)
@@ -163,9 +164,13 @@ def build_class_sheet(wb):
     assert cols[2] == "兵种名" and cols[5:14] == STATS
     ws.cell(2, 5).value = "纳入推荐\n(是/否/靠后)"
     for r in range(3, 3 + len(rows)):
-        for c in (4, 5):
+        for c in (4, 5, cols.index("精通加成属性") + 1, cols.index("精通加成值") + 1):
             ws.cell(r, c).fill = fill_input
             ws.cell(r, c).font = f_input
+    mcol = CL(cols.index("精通加成属性") + 1)
+    dv_m = DataValidation(type="list", formula1='"' + ",".join(STATS) + '"', allow_blank=True)
+    ws.add_data_validation(dv_m)
+    dv_m.add(f"{mcol}3:{mcol}{DATA_LAST}")
     dv = DataValidation(type="list", formula1='"是,靠后,否"', allow_blank=True)
     ws.add_data_validation(dv)
     dv.add(f"E3:E{DATA_LAST}")
@@ -174,6 +179,7 @@ def build_class_sheet(wb):
     notes = [
         "「最低转职等级」：初级5、中级20、上级35、最上级45（暂定）、神将45（暂定）。自动推荐只会在达到该等级后才转入此职业。",
         "「纳入推荐」：是=参与推荐；靠后=参与推荐，但同等条件下排在其他路线后面（舞者、飞天女神将）；否=不参与自动推荐（手动路线仍可选）。没解锁或不想用的职业可改成否。",
+        "「精通加成属性/值」：在该职业累计练满「精通需练级数」（规划页，默认5级）即视为精通，最终属性加上该加成（如天翼兵 魔防+3）。可按实际数据补充其他职业。",
         "「转职·主要技能」为转职必需的武器熟练度（全部满足），「转职·选择技能」为满足其一即可；规划页会据此检查路线可行性。「使用武器」决定在该职业期间能练哪些熟练度。",
         "要追加职业，在表格末尾接着填一行即可（第152行以内），兵种名会自动出现在养成规划的下拉框里。",
     ]
@@ -192,6 +198,7 @@ SC = [CL(4 + j) for j in range(NS)]           # 主页面属性列 D..L
 WC = [CL(2 + s) for s in range(NK)]           # 主页面熟练度列 B..M
 DC = [CL(6 + j) for j in range(NS)]           # 数据表属性列 F..N
 LAST_VIS = "P"                                # 可见区最右列
+I_STR, I_MAG, I_SPD, I_DEF, I_RES = 1, 2, 3, 5, 6   # 力量/魔力/速度/防守/魔防 在 STATS 中的下标
 
 CHAR_NAMES = f"{CHAR_Q}!$C$3:$C${DATA_LAST}"
 CLASS_NAMES = f"{CLASS_Q}!$C$3:$C${DATA_LAST}"
@@ -204,10 +211,15 @@ R_WSEC, R_WHDR, R_WINIT, R_WCUR, R_WUSE = 17, 18, 19, 20, 21
 R_BSEC, R_BHDR, R_B0 = 23, 24, 25
 R_OSEC, R_OHDR, R_O0 = 31, 32, 33
 R_SSEC, R_SHDR, R_S0 = 39, 40, 41
-R_FSEC, R_FHDR, R_F0 = 48, 49, 50
-R_MSEC, R_MHDR, R_M0 = 55, 56, 57
-R_TSEC, R_THDR, R_T0 = 64, 65, 66
+R_FSEC, R_FHDR, R_F0 = 48, 49, 50             # 50 成长结果 51 精通加成 52 最终 53 目标 54 差值 55 判定
+R_ESEC, R_E0 = 57, 58                         # 58 速度 59 攻击 60 物防 61 魔防 62 综合
+R_MSEC, R_MHDR, R_M0 = 64, 65, 66
+R_TSEC, R_THDR, R_T0 = 73, 74, 75
 R_TLAST = R_T0 + TL_ROWS - 1
+
+# 实战评估参数（可见区右上 N3:P12）
+EN = {"spd": "$O$4", "patk": "$O$5", "matk": "$O$6", "pdef": "$O$7", "mdef": "$O$8",
+      "type": "$O$9", "speed": "$O$10", "front": "$O$11", "might": "$O$12"}
 
 
 def class_col(letter, last=DATA_LAST + 1):
@@ -253,7 +265,8 @@ def build_main(wb, char_cols, class_cols):
     kcol = {h: CL(i + 1) for i, h in enumerate(class_cols)}
     SK_CHAR = [ccol[s] for s in SKILLS]
     C_USE, C_MAIN, C_SEL = kcol["使用武器"], kcol["转职·主要技能"], kcol["转职·选择技能"]
-    C_COND, C_UNLOCK = kcol["转职条件"], kcol["解放条件"]
+    C_COND, C_UNLOCK, C_FEAT = kcol["转职条件"], kcol["解放条件"], kcol["兵种特性"]
+    C_MBA, C_MBV = kcol["精通加成属性"], kcol["精通加成值"]
 
     # ------------------------------------------------------------------
     # 辅助区列分配（Q 列起全部隐藏）
@@ -261,23 +274,29 @@ def build_main(wb, char_cols, class_cols):
     A = Alloc(18)
     SCL_L, SCL_V = A.take(), A.take()
     W_LO, W_HI, W_E, W_N = A.take(), A.take(), A.take(), A.take()
-    V9 = A.take(NS)            # 行5 C0，行6 C4，行7 K，行8 KT
-    V13 = A.take(13)           # 行5 等级表，行6 当前熟练度，行7 可练标记，行8~12 推荐1各阶段累计可练
+    V9 = A.take(NS)            # 行5 C0，行6 C4，行7 K，行8 KT，行9 当前路线精通加成
+    V13 = A.take(13)           # 行5 等级表，行6 当前熟练度，行7 可练标记
     CLS = {"name": A.take(), "min": A.take(), "avail": A.take(), "low": A.take(),
            "G": A.take(NS), "T": A.take(NK), "RM": A.take(NK), "RS": A.take(NK), "NM": A.take(NK), "SU": A.take(NK),
-           "SA": A.take(), "SS": A.take(), "EL": A.take(3), "CN": A.take(3), "ELU": A.take(4), "CNU": A.take(4)}
+           "SA": A.take(), "SS": A.take(), "EL": A.take(3), "CN": A.take(3), "ELU": A.take(4), "CNU": A.take(4),
+           "MB": A.take(NS), "MBANY": A.take(), "MBTXT": A.take()}
     FL = [{"idx": A.take(), "name": A.take(), "C": A.take(NS)} for _ in range(3)]
     UL = A.take(4)
-    CMB = {k: A.take() for k in ("i1", "i2", "i3", "id1", "id2", "id3", "bad", "low", "met", "short", "total", "score")}
-    REF = {k: A.take() for k in ("k", "j", "x", "B", "valid", "bad", "low", "met", "short", "total", "score", "best")}
-    RK = {k: A.take() for k in ("pos", "valid", "met", "short", "total", "bad", "low", "i1", "i2", "i3",
-                                "k", "x", "B", "P", "head", "split", "first", "second")}
-    RK["FROM"], RK["IDX"], RK["NAME"], RK["N"] = A.take(6), A.take(6), A.take(6), A.take(6)
-    SEG = {k: A.take() for k in ("from", "idx", "name", "n", "prev", "piece", "scan")}
+    CMB = {k: A.take() for k in ("i1", "i2", "i3", "id1", "id2", "id3", "id4", "w0", "w1", "w2", "w3", "w4",
+                                 "low", "met", "short", "total", "combat", "score")}
+    CMB["F"] = A.take(NS)
+    REF = {k: A.take() for k in ("k", "j", "x", "B", "P", "valid", "w0", "w1", "w2", "w3", "w4", "wB",
+                                 "low", "met", "short", "total", "combat", "score", "best")}
+    REF["F"] = A.take(NS)
+    RK = {k: A.take() for k in ("pos", "valid", "met", "short", "total", "bad", "low", "combat", "mtxt",
+                                "i1", "i2", "i3", "k", "x", "B", "P", "head", "split", "first", "second")}
+    RK["FROM"], RK["IDX"], RK["NAME"], RK["N"], RK["F"] = A.take(6), A.take(6), A.take(6), A.take(6), A.take(NS)
+    SEG = {k: A.take() for k in ("from", "idx", "name", "n", "prev", "piece", "scan", "lv", "first", "w")}
     SEG["U"] = A.take(NK)
     MAN = {k: A.take() for k in ("from", "idx", "name", "n", "prev", "piece", "scan")}
     MAN["U"] = A.take(NK)
     TLH = {"idx": A.take(), "cum": A.take(NS)}
+    SEGI = SEG["idx"]
     LAST_HELPER = A.c - 1
 
     H = ws.__setitem__
@@ -288,70 +307,89 @@ def build_main(wb, char_cols, class_cols):
     EW = rng(W_E, H0 + 1, H0 + 4)        # k=1..4
     NW = rng(W_N, H0 + 1, H0 + 4)
 
-    # 标量
-    scal = {}
-    srow = [H0]
+    # 标量：先分配位置（公式互相引用），再写入
+    names_order = (["startCls", "startIdx", "tgZ", "tgtIdx", "tgtMin", "force", "cnt1", "cnt2", "cnt3", "m1", "m2", "m3",
+                    "M", "listOK", "tgtCnt", "mm1", "mm2", "mm3", "mm4", "sz1", "sz2", "sz3", "sz4",
+                    "O1", "O2", "O3", "O4", "R", "NN1", "NN2", "NN3", "NN4", "head1", "head2", "head3", "head4",
+                    "P1", "P2", "P3", "P4", "validT", "lowT", "entryLv", "sel", "rankMissing", "manualBad",
+                    "Nm", "clsRef", "typeMag", "front", "fast", "eD", "combatN"]
+                   + [f"bLv{k}" for k in range(5)] + [f"bFirst{k}" for k in range(5)])
+    scal = {nm: f"${SCL_V}${H0 + i}" for i, nm in enumerate(names_order)}
 
     def S(name, formula):
-        r = srow[0]
+        r = int(scal[name].split("$")[-1])
         H(f"{SCL_L}{r}", name)
         H(f"{SCL_V}{r}", formula)
-        scal[name] = f"${SCL_V}${r}"
-        srow[0] += 1
-        return scal[name]
 
     def ref(name):
         return scal[name]
 
-    # 预先确定标量位置（公式里互相引用）
-    names_order = (["startIdx", "tgtIdx", "tgtMin", "force", "cnt1", "cnt2", "cnt3", "m1", "m2", "m3", "M", "listOK",
-                    "tgtCnt", "mm1", "mm2", "mm3", "mm4", "sz1", "sz2", "sz3", "sz4", "O1", "O2", "O3", "O4", "R",
-                    "NN1", "NN2", "NN3", "NN4", "head1", "head2", "head3", "head4", "P1", "P2", "P3", "P4",
-                    "validT", "badT", "lowT", "entryLv", "sel", "rankMissing", "manualBad"])
-    for i, nm in enumerate(names_order):
-        scal[nm] = f"${SCL_V}${H0 + i}"
+    CS = ref("startCls")      # 起点职业（C9 留空 = 角色初始兵种）
+    si = ref("startIdx")
+    # 常用区域定义为工作簿名称，大幅缩短公式（文件体积和解析时间）
+    defnames = {}
 
-    NAMES = rng(CLS["name"], H0, CLS_LAST)
-    MINC = rng(CLS["min"], H0, CLS_LAST)
-    LOWC = rng(CLS["low"], H0, CLS_LAST)
-    SAC, SSC = rng(CLS["SA"], H0, CLS_LAST), rng(CLS["SS"], H0, CLS_LAST)
-    GMAT = mrng(CLS["G"][0], CLS["G"][-1], H0, CLS_LAST)
-    TMAT = mrng(CLS["T"][0], CLS["T"][-1], H0, CLS_LAST)
-    NMMAT = mrng(CLS["NM"][0], CLS["NM"][-1], H0, CLS_LAST)
-    SUMAT = mrng(CLS["SU"][0], CLS["SU"][-1], H0, CLS_LAST)
-    RANKROW = mrng(V13[0], V13[12], H0, H0)
-    CURROW = mrng(V13[0], V13[NK - 1], H0 + 1, H0 + 1)
-    CTROW = mrng(V13[0], V13[NK - 1], H0 + 2, H0 + 2)
-    UCUM = mrng(V13[0], V13[NK - 1], H0 + 3, H0 + 7)
-    KROW = mrng(V9[0], V9[-1], H0 + 2, H0 + 2)
-    KTROW = mrng(V9[0], V9[-1], H0 + 3, H0 + 3)
-    START = "$D$9:$L$9"
+    def dn(name, ref_):
+        defnames[name] = ref_
+        return name
+
+    NAMES = dn("z_NAMES", rng(CLS["name"], H0, CLS_LAST))
+    MINC = dn("z_MIN", rng(CLS["min"], H0, CLS_LAST))
+    LOWC = dn("z_LOW", rng(CLS["low"], H0, CLS_LAST))
+    MBANY = dn("z_MBANY", rng(CLS["MBANY"], H0, CLS_LAST))
+    MBTXT = dn("z_MBTXT", rng(CLS["MBTXT"], H0, CLS_LAST))
+    SAC, SSC = dn("z_SA", rng(CLS["SA"], H0, CLS_LAST)), dn("z_SS", rng(CLS["SS"], H0, CLS_LAST))
+    GMAT = dn("z_GMAT", mrng(CLS["G"][0], CLS["G"][-1], H0, CLS_LAST))
+    TMAT = dn("z_TMAT", mrng(CLS["T"][0], CLS["T"][-1], H0, CLS_LAST))
+    NMMAT = dn("z_NMMAT", mrng(CLS["NM"][0], CLS["NM"][-1], H0, CLS_LAST))
+    SUMAT = dn("z_SUMAT", mrng(CLS["SU"][0], CLS["SU"][-1], H0, CLS_LAST))
+    _g = [dn(f"z_G{j}", rng(CLS["G"][j], H0, CLS_LAST)) for j in range(NS)]
+    _mb = [dn(f"z_MB{j}", rng(CLS["MB"][j], H0, CLS_LAST)) for j in range(NS)]
+    gcol = lambda j: _g[j]
+    mbcol = lambda j: _mb[j]
+    RANKROW = dn("z_RANKS", mrng(V13[0], V13[12], H0, H0))
+    CURROW = dn("z_CUR", mrng(V13[0], V13[NK - 1], H0 + 1, H0 + 1))
+    CTROW = dn("z_CT", mrng(V13[0], V13[NK - 1], H0 + 2, H0 + 2))
     TGT = "$D$10:$L$10"
-    FLC = [mrng(FL[k]["C"][0], FL[k]["C"][-1], H0, H0 + DATA_ROWS - 1) for k in range(3)]
-    FLI = [rng(FL[k]["idx"], H0, H0 + DATA_ROWS - 1) for k in range(3)]
-    ULMAT = mrng(UL[0], UL[3], H0, H0 + DATA_ROWS - 1)
-    OROW = f"{ref('O1')}:{ref('O4')}"
-    NNROW = f"{ref('NN1')}:{ref('NN4')}"
-    HEADROW = f"{ref('head1')}:{ref('head4')}"
-    PROW = f"{ref('P1')}:{ref('P4')}"
+    FLI = [dn(f"z_L{k + 1}IDX", rng(FL[k]["idx"], H0, H0 + DATA_ROWS - 1)) for k in range(3)]
+    _flc = [[dn(f"z_L{k + 1}C{j}", rng(FL[k]["C"][j], H0, H0 + DATA_ROWS - 1)) for j in range(NS)] for k in range(3)]
+    flc = lambda k, j: _flc[k][j]
+    ULMAT = dn("z_ULMAT", mrng(UL[0], UL[3], H0, H0 + DATA_ROWS - 1))
+    OROW = dn("z_OFS", f"{ref('O1')}:{ref('O4')}")
+    NNROW = dn("z_NN", f"{ref('NN1')}:{ref('NN4')}")
+    HEADROW = dn("z_HEAD", f"{ref('head1')}:{ref('head4')}")
+    PROW = dn("z_P", f"{ref('P1')}:{ref('P4')}")
+    Nm = ref("Nm")
     trow = lambda x: f"INDEX({TMAT},{Z(x)},0)"
 
     def badc(x, u):
-        """转入职业 x 时，熟练度无法满足的项数（u = 之前职业累计可练向量表达式）。"""
+        """转入职业 x 时，熟练度需注意（之前职业练不了）的项数；u = 之前职业累计可练向量表达式。"""
         zx = Z(x)
         return (f"(SUMPRODUCT(INDEX({NMMAT},{zx},0)*((({u})*{CTROW})=0))"
                 f"+IF(AND(INDEX({SAC},{zx})=1,INDEX({SSC},{zx})=0,"
                 f"SUMPRODUCT(INDEX({SUMAT},{zx},0)*((({u})*{CTROW})>0))=0),1,0))")
 
-    def score(ok, bad, low, met, short, total, i):
-        # 量级控制在 14 位有效数字内（LibreOffice 只保留 15 位），否则区分并列用的小数会丢失
-        return (f"=IF({ok},(9-MIN({bad},9))*1E+9+{met}*1E+8+({low}=0)*1E+7-MIN({short},999)*1E+4"
-                f"+MIN({total},9999)-{i}/1E+4,-1E+12-{i})")
+    def combat(F):
+        """实战评估通过项数。F = 9 个最终属性单元格。"""
+        t, fa, fr, eD = ref("typeMag"), ref("fast"), ref("front"), ref("eD")
+        return (f'IF({EN["spd"]}="",0,IF({fa}=1,{F[I_SPD]}>={EN["spd"]}+4,{F[I_SPD]}>={EN["spd"]}-3)*1)'
+                f'+IF({eD}="",0,(IF({t}=1,{F[I_MAG]},{F[I_STR]})+N({EN["might"]})>{eD})*1)'
+                f'+IF(AND({fr}=1,{EN["patk"]}<>""),({F[I_DEF]}>={EN["patk"]}-5)*1,0)'
+                f'+IF(AND({fr}=1,{EN["matk"]}<>""),({F[I_RES]}>={EN["matk"]}-5)*1,0)')
 
-    def met_short_total(fin):
-        return (f'SUMPRODUCT(({TGT}<>"")*({fin}>={TGT}))',
-                f'SUMPRODUCT(({TGT}<>"")*(({TGT}-{fin})>0)*({TGT}-{fin}))',
-                f"SUMPRODUCT({fin})")
+    def score(ok, low, met, short, total, cmb, F, i):
+        # 排序：达成项 > 实战评估 > 不含靠后职业 > 缺口 > 力或魔 > 属性总和（熟练度只作提示，不参与排序）；
+        # 量级控制在 14 位有效数字内（LibreOffice 只保留 15 位），否则区分并列用的小数会丢失
+        atk = f"IF({ref('typeMag')}=1,{F[I_MAG]},{F[I_STR]})"
+        return (f"=IF({ok},{met}*1E+9+{cmb}*1E+8+({low}=0)*1E+7"
+                f"-MIN({short},99)*1E+5+MIN({atk},99)*1E+3+MIN({total},999)-{i}/1E+4,-1E+11-{i})")
+
+    def eval_cells(c, F, ok):
+        frow = f"{F[0]}:{F[-1]}"
+        H(c["met"], f'=IF({ok},SUMPRODUCT(({TGT}<>"")*({frow}>={TGT})),0)')
+        H(c["short"], f'=IF({ok},SUMPRODUCT(({TGT}<>"")*(({TGT}-{frow})>0)*({TGT}-{frow})),0)')
+        H(c["total"], f"=IF({ok},SUM({frow}),0)")
+        H(c["combat"], f"=IF({ok},{combat(F)},0)")
 
     # ------------------------------------------------------------------
     # 标题 / 输入区
@@ -361,8 +399,8 @@ def build_main(wb, char_cols, class_cols):
     ws["A1"].font = f_title
     ws.row_dimensions[1].height = 30
     ws.merge_cells(f"A2:{LAST_VIS}2")
-    ws["A2"] = ("用法：黄底蓝字是输入格。① 选角色 → 填起点/目标的等级、职业、属性（目标属性不填=不作要求）→ ② 填当前武器熟练度 → "
-                "③ 看推荐路线与中途换职优化，在「显示路线」切换 → ④ 查看每段的转职等级、所需熟练度与解锁条件 → ⑥ 逐级成长表。"
+    ws["A2"] = ("用法：黄底蓝字是输入格。① 选角色 → 填起点/目标的等级、职业、属性（目标属性不填=不作要求）→ 右侧⑦填敌方参考值 → ② 填当前武器熟练度 → "
+                "③ 看推荐路线与中途换职优化，在「显示路线」切换 → ④ 每段的转职等级、所需熟练度与解锁条件 → 最终属性与实战评估 → ⑥ 逐级成长表。"
                 "规则：每升1级，各属性经验槽 +（角色成长率+职业补正，最低0），满100则该属性+1。")
     ws["A2"].font = f_note
     ws["A2"].alignment = left
@@ -376,25 +414,28 @@ def build_main(wb, char_cols, class_cols):
     char_match = f"MATCH($B$4,{CHAR_NAMES},0)"
     ws["E4"] = "阵营"
     ws.merge_cells("F4:G4")
-    ws["F4"] = f'=IFERROR(INDEX({CHAR_Q}!$B$3:$B${DATA_LAST},{char_match}),"")'
-    ws["H4"] = "初始兵种"
+    ws["F4"] = f'=IFERROR(INDEX({CHAR_Q}!$B$3:$B${DATA_LAST},{char_match})&"","")'
+    ws["H4"] = "初始兵种\n(自动)"
     ws.merge_cells("I4:J4")
-    ws["I4"] = f'=IFERROR(INDEX({CHAR_Q}!$E$3:$E${DATA_LAST},{char_match}),"")'
+    ws["I4"] = f'=IFERROR(INDEX({CHAR_Q}!$E$3:$E${DATA_LAST},{char_match})&"","")'
     ws.merge_cells("K4:M4")
     ws["K4"] = (f'=IF($B$4="","请选择角色",IF(ISNA({char_match}),"⚠ 角色表里找不到该角色",'
-                f'IF(COUNT(INDEX({CHAR_Q}!$F$3:$N${DATA_LAST},{char_match},0))=0,"⚠ 该角色成长率数据缺失（按0计算）","✓ 成长率已读取")))')
+                f'IF(COUNT(INDEX({CHAR_Q}!$F$3:$N${DATA_LAST},{char_match},0))=0,"⚠ 该角色成长率数据缺失（按0计算）",'
+                f'"✓ 成长率已读取（初始兵种随角色自动显示；起点职业在C9选，留空=用初始兵种）")))')
     for r in ("E4", "H4"):
         ws[r].font = f_bold
         ws[r].alignment = center
     style_range(ws, "F4:G4", fill=fill_grey, align=center)
     style_range(ws, "I4:J4", fill=fill_grey, align=center)
     ws["K4"].font = f_bold
-    ws["K4"].alignment = left_nowrap
+    ws["K4"].alignment = left
+    ws.row_dimensions[4].height = 30
 
     header(ws, 6, ["项目", "等级", "职业"] + STATS + ["说明"])
     labels = {7: "角色成长率%", 8: "起点职业补正%", 9: "起点", 10: "目标", 11: "需提升", 12: "每级需成长%"}
     notes = {7: "来自「角色成长率」表", 8: "来自「职业」表，仅供参考",
-             9: "填当前等级、职业和面板属性（示例数据，请替换）", 10: "目标属性留空=不作要求；目标职业留空=45级后沿用上一职业",
+             9: "填当前等级、职业（留空=初始兵种）和面板属性（示例数据，请替换）",
+             10: "目标属性留空=不作要求；目标职业留空=45级后沿用上一职业",
              11: "目标 − 起点", 12: "达成目标平均每级需要的（角色+职业）成长，可对照职业补正"}
     for r, t in labels.items():
         ws.cell(r, 1, t).font = f_bold
@@ -406,7 +447,7 @@ def build_main(wb, char_cols, class_cols):
     for j in range(NS):
         s, d = SC[j], DC[j]
         ws[f"{s}7"] = f"=IFERROR(INDEX({CHAR_Q}!{d}$3:{d}${DATA_LAST},{char_match})+0,0)"
-        ws[f"{s}8"] = f"=IFERROR(INDEX({class_col(d)},MATCH($C$9,{CLASS_NAMES},0))+0,0)"
+        ws[f"{s}8"] = f"=IFERROR(INDEX({class_col(d)},MATCH({CS},{CLASS_NAMES},0))+0,0)"
         ws[f"{s}11"] = f'=IF(OR({s}10="",{s}9=""),"",{s}10-{s}9)'
         ws[f"{s}12"] = (f'=IF(OR({s}10="",$B$10="",$B$9="",$B$10<=$B$9),"",'
                         f'ROUND(MAX(0,({s}10-{s}9)*100-$B$14)/($B$10-$B$9),1))')
@@ -425,11 +466,20 @@ def build_main(wb, char_cols, class_cols):
     ws["A13"] = "换职最少练级"
     ws["A13"].font = f_bold
     ws["B13"] = 3
+    ws.merge_cells("C13:F13")
+    ws["C13"] = "「优化」中途换职前后两段各至少练几级"
+    ws.merge_cells("G13:H13")
+    ws["G13"] = "精通需练级数"
+    ws["G13"].font = f_bold
+    ws["G13"].alignment = center
+    ws["I13"] = 5
+    ws.merge_cells("J13:L13")
+    ws["J13"] = "同一职业累计练满即算精通（如天翼兵 魔防+3）"
+    for r in ("C13", "J13"):
+        ws[r].font = f_note
+        ws[r].alignment = left_nowrap
     style_range(ws, "B13:B13", font=f_input, fill=fill_input, align=center)
-    ws.merge_cells("C13:L13")
-    ws["C13"] = "「优化」路线中途换职时，换职前后两段各至少练这么多级（避免只练1级就换的无意义方案）"
-    ws["C13"].font = f_note
-    ws["C13"].alignment = left_nowrap
+    style_range(ws, "I13:I13", font=f_input, fill=fill_input, align=center)
     ws["A14"] = "初始经验槽%"
     ws["A14"].font = f_bold
     ws["B14"] = 0
@@ -455,8 +505,41 @@ def build_main(wb, char_cols, class_cols):
     ws["M14"].alignment = left
     ws.row_dimensions[14].height = 30
 
+    # ⑦ 实战评估参数（右上）
+    ws.merge_cells("N3:P3")
+    ws["N3"] = "⑦ 实战评估参数（留空=不评估该项）"
+    ws["N3"].font = f_hdr
+    ws["N3"].fill = fill_hdr
+    ws["N3"].alignment = left_nowrap
+    en_rows = [
+        ("spd", "敌方速度", 30, "我方速度 ≥ 敌速+4 可追击；敌速 ≥ 我方+4 会被追击（示例值）"),
+        ("patk", "敌方物理攻击", 30, "前排：防守 ≥ 敌物攻−5 视为达标"),
+        ("matk", "敌方魔法攻击", 25, "前排：魔防 ≥ 敌魔攻−5 视为达标"),
+        ("pdef", "敌方防守", 15, "物理角色：力量+武器威力 > 敌防守 = 破甲"),
+        ("mdef", "敌方魔防", 10, "魔法角色：魔力+武器威力 > 敌魔防 = 破甲"),
+        ("type", "我方攻击类型", "自动", None),
+        ("speed", "速度定位", "自动", None),
+        ("front", "前排定位", "自动", None),
+        ("might", "我方武器威力", 0, "可填常用武器威力，默认0"),
+    ]
+    for i, (key, label, default, note) in enumerate(en_rows):
+        r = 4 + i
+        ws[f"N{r}"] = label
+        ws[f"N{r}"].font = f_bold
+        ws[f"N{r}"].alignment = center
+        ws[f"N{r}"].border = border
+        ws[f"O{r}"] = default
+        style_range(ws, f"O{r}:O{r}", font=f_input, fill=fill_input, align=center)
+        ws[f"P{r}"] = note
+        ws[f"P{r}"].font = f_note
+        ws[f"P{r}"].alignment = left_nowrap
+        ws[f"P{r}"].border = border
+    ws["P9"] = f'="→ "&IF({ref("typeMag")}=1,"魔法","物理")&"（自动=按目标职业的力/魔成长判断）"'
+    ws["P10"] = f'="→ "&IF({ref("fast")}=1,"高速：以追击为目标","低速：以不被追击为目标")&"（自动=前排按低速，否则速度成长≥50为高速）"'
+    ws["P11"] = f'="→ "&IF({ref("front")}=1,"前排：评估物防/魔防","非前排")&"（自动=目标职业为重装）"'
+
     # ② 武器熟练度
-    section(ws, R_WSEC, "② 武器熟练度（用于检查转职条件；每个职业只能练它「使用武器」里的熟练度）", LAST_VIS)
+    section(ws, R_WSEC, "② 武器熟练度（用于提示转职条件；每个职业只能练它「使用武器」里的熟练度）", LAST_VIS)
     header(ws, R_WHDR, ["项目"] + SKILLS + ["说明"])
     ws.merge_cells(f"N{R_WHDR}:{LAST_VIS}{R_WHDR}")
     for r, t, note in ((R_WINIT, "角色初始", "来自「角色成长率」表（—=数据缺失）"),
@@ -491,51 +574,66 @@ def build_main(wb, char_cols, class_cols):
         H(f"{W_E}{r}", f"=IFERROR(MIN(MAX($B$9,{W_LO}{r}),$B$10),0)")
         H(f"{W_N}{r}", f"=IFERROR(MAX(0,MIN($B$10,{W_HI}{r})-MAX($B$9,{W_LO}{r})),0)")
 
-    S("startIdx", f"=IFERROR(MATCH($C$9,{NAMES},0),0)")
+    S("startCls", '=IF($C$9="",$I$4,$C$9)')
+    S("startIdx", f"=IFERROR(MATCH({CS},{NAMES},0),{HZ})")  # 找不到时指向全0空行
     S("tgtIdx", f'=IF($C$10="",0,IFERROR(MATCH($C$10,{NAMES},0),0))')
+    S("tgZ", f"={Z(ref('tgtIdx'))}")
     S("tgtMin", f"=INDEX({MINC},{Z(ref('tgtIdx'))})")
     S("force", f'=IF(OR($C$10="",{N[4]}>0),0,IF({N[3]}>0,3,IF({N[2]}>0,2,IF({N[1]}>0,1,0))))')
     for k in range(3):
         S(f"cnt{k + 1}", f"=COUNTIF({rng(CLS['EL'][k], H0, CLS_LAST)},TRUE)")
-    for k in range(3):
         S(f"m{k + 1}", f"=IF({N[k + 1]}=0,1,MAX(1,{ref(f'cnt{k + 1}')}))")
     S("M", f"={ref('m1')}*{ref('m2')}*{ref('m3')}")
     S("listOK", "=AND(" + ",".join(f"OR({N[k + 1]}=0,{ref(f'cnt{k + 1}')}>0)" for k in range(3)) + ")")
     S("tgtCnt", "=COUNT($D$10:$L$10)")
     for k in range(4):
         S(f"mm{k + 1}", f"=COUNTIF({rng(CLS['ELU'][k], H0, CLS_LAST)},TRUE)")
-    for k in range(4):
         S(f"sz{k + 1}", f"=IF({N[k + 1]}>=2,{ref(f'mm{k + 1}')}*({N[k + 1]}-1),0)")
+        S(f"NN{k + 1}", f"=MAX(1,{N[k + 1]}-1)")
+        S(f"P{k + 1}", f"=${RK['IDX'][k + 1]}${H0}")
     S("O1", "=0")
     for k in range(1, 4):
         S(f"O{k + 1}", f"={ref(f'O{k}')}+{ref(f'sz{k}')}")
     S("R", f"={ref('O4')}+{ref('sz4')}")
-    for k in range(4):
-        S(f"NN{k + 1}", f"=MAX(1,{N[k + 1]}-1)")
     for k in range(3):
         S(f"head{k + 1}", f"=IF({ref('force')}={k + 1},1,0)")
     S("head4", f'=IF(AND($C$10<>"",{N[4]}>0),1,0)')
-    for k in range(4):
-        S(f"P{k + 1}", f"=${RK['IDX'][k + 1]}${H0}")
     S("validT", f"=${RK['valid']}${H0}")
-    S("badT", f"=${RK['bad']}${H0}")
     S("lowT", f"=${RK['low']}${H0}")
     S("entryLv", f"=IF({N[4]}>0,{E[4]},IF({ref('force')}>0,INDEX({rng(W_E, H0, H0 + 4)},{ref('force')}+1),$B$9))")
     S("sel", '=IF($K$14="手动",0,IF(LEFT($K$14,2)="优化",5,0)+IFERROR(VALUE(RIGHT($K$14,1)),1))')
     S("rankMissing", f'=AND(COUNTIF($B${R_WINIT}:$M${R_WINIT},"—")+COUNTBLANK($B${R_WINIT}:$M${R_WINIT})>=12,'
                      f'COUNTA($B${R_WCUR}:$M${R_WCUR})=0)')
     S("manualBad", "=OR(" + ",".join(f"${MAN['from']}${H0 + j + 1}<${MAN['from']}${H0 + j}" for j in range(5)) + ")")
-    assert srow[0] == H0 + len(names_order), "标量顺序不一致"
+    S("Nm", "=MAX(1,N($I$13))")
+    S("clsRef", f"=IF({ref('tgtIdx')}>0,{ref('tgtIdx')},{si})")
+    zc = Z(ref("clsRef"))
+    S("typeMag", (f'=IF({EN["type"]}="魔法",1,IF({EN["type"]}="物理",0,'
+                  f'IF(INDEX({gcol(I_MAG)},{zc})>INDEX({gcol(I_STR)},{zc}),1,0)))'))
+    S("front", (f'=IF({EN["front"]}="是",1,IF({EN["front"]}="否",0,'
+                f'IF(ISNUMBER(SEARCH("重装",INDEX({class_col(C_FEAT)},{zc}))),1,0)))'))
+    S("fast", (f'=IF({EN["speed"]}="高速追击",1,IF({EN["speed"]}="低速防追",0,'
+               f'IF({ref("front")}=1,0,IF(INDEX({gcol(I_SPD)},{zc})>=50,1,0))))'))
+    S("eD", (f'=IF({ref("typeMag")}=1,IF({EN["mdef"]}="","",{EN["mdef"]}),'
+             f'IF({EN["pdef"]}="","",{EN["pdef"]}))'))
+    S("combatN", (f'=({EN["spd"]}<>"")+({ref("eD")}<>"")+{ref("front")}*({EN["patk"]}<>"")'
+                  f'+{ref("front")}*({EN["matk"]}<>"")'))
+    # 推荐1 各区间职业的累计级数 / 是否首次出现（用于精通判断）
+    bIDX = [f"${RK['IDX'][k]}${H0}" for k in range(5)]
+    for k in range(5):
+        S(f"bLv{k}", "=" + "+".join(f"{N[j]}*({bIDX[j]}={bIDX[k]})" for j in range(5)))
+        S(f"bFirst{k}", "=AND(TRUE" + "".join(f",NOT(AND({N[j]}>0,{bIDX[j]}={bIDX[k]}))" for j in range(k)) + ")")
 
-    # 向量：C0 / C4 / K / KT
+    # 向量：C0 / C4 / K / KT / 当前路线精通加成
     for j in range(NS):
-        v, g = V9[j], rng(CLS["G"][j], H0, CLS_LAST)
-        H(f"{v}{H0}", f"={N[0]}*IF({ref('startIdx')}=0,MAX(0,{SC[j]}$7),INDEX({g},{ref('startIdx')}))")
+        v, g = V9[j], gcol(j)
+        H(f"{v}{H0}", f"={N[0]}*IF({si}={HZ},MAX(0,{SC[j]}$7),INDEX({g},{si}))")
         H(f"{v}{H0 + 1}", f"=IF({ref('tgtIdx')}=0,0,{N[4]}*INDEX({g},{ref('tgtIdx')}))")
         H(f"{v}{H0 + 2}", f"=$B$14+{v}{H0}+{v}{H0 + 1}")
-        H(f"{v}{H0 + 3}", (f"={v}{H0 + 2}+INDEX({rng(FL[0]['C'][j], H0, H0 + DATA_ROWS - 1)},${RK['i1']}${H0})"
-                           f"+INDEX({rng(FL[1]['C'][j], H0, H0 + DATA_ROWS - 1)},${RK['i2']}${H0})"
-                           f"+INDEX({rng(FL[2]['C'][j], H0, H0 + DATA_ROWS - 1)},${RK['i3']}${H0})"))
+        H(f"{v}{H0 + 3}", (f"={v}{H0 + 2}+INDEX({flc(0, j)},${RK['i1']}${H0})"
+                           f"+INDEX({flc(1, j)},${RK['i2']}${H0})+INDEX({flc(2, j)},${RK['i3']}${H0})"))
+        H(f"{v}{H0 + 4}", "=" + "+".join(f"${SEG['w']}${H0 + s}*INDEX({mbcol(j)},{Z(f'${SEGI}${H0 + s}')})"
+                                         for s in range(6)))
     # 等级表 / 当前熟练度 / 可练 / 推荐1累计可练
     for i, rk in enumerate(RANKS):
         H(f"{V13[i]}{H0}", rk)
@@ -543,10 +641,6 @@ def build_main(wb, char_cols, class_cols):
         v = f'IF(${WC[s]}${R_WCUR}<>"",${WC[s]}${R_WCUR},${WC[s]}${R_WINIT})'
         H(f"{V13[s]}{H0 + 1}", f'=IF({v}="×",0,IFERROR(MATCH({v},{RANKROW},0),2))')
         H(f"{V13[s]}{H0 + 2}", f'=IF({v}="×",0,1)')
-        tcol = rng(CLS["T"][s], H0, CLS_LAST)
-        H(f"{V13[s]}{H0 + 3}", f"=INDEX({tcol},{Z(ref('startIdx'))})")
-        for k in range(1, 5):
-            H(f"{V13[s]}{H0 + 3 + k}", f"={V13[s]}{H0 + 2 + k}+INDEX({tcol},{Z(ref(f'P{k}'))})")
 
     # ------------------------------------------------------------------
     # 职业辅助表（行5~154 对应职业表第3~152行，行155为全0空行）
@@ -561,6 +655,9 @@ def build_main(wb, char_cols, class_cols):
         H(f"{CLS['low']}{r}", f'=IF({av}="靠后",1,0)')
         for j in range(NS):
             H(f"{CLS['G'][j]}{r}", f'=IF({nm}="",0,MAX(0,{SC[j]}$7+N({CLASS_Q}!{DC[j]}{cr})))')
+            H(f"{CLS['MB'][j]}{r}", f'=IF({nm}="",0,IF({CLASS_Q}!${C_MBA}{cr}="{STATS[j]}",IFERROR(1*{CLASS_Q}!${C_MBV}{cr},0),0))')
+        H(f"{CLS['MBANY']}{r}", f"=IF(SUMPRODUCT(ABS({CLS['MB'][0]}{r}:{CLS['MB'][-1]}{r}))>0,1,0)")
+        H(f"{CLS['MBTXT']}{r}", f'=IF(${CLS["MBANY"]}{r}=1,{CLASS_Q}!${C_MBA}{cr}&"+"&{CLASS_Q}!${C_MBV}{cr},"")')
         for s in range(NK):
             key, L = SKILL_KEYS[s], len(SKILL_KEYS[s])
             H(f"{CLS['T'][s]}{r}", f'=IF({nm}="",0,IF(ISNUMBER(SEARCH("{key}",{CLASS_Q}!${C_USE}{cr})),1,0))')
@@ -573,17 +670,17 @@ def build_main(wb, char_cols, class_cols):
             H(f"{CLS['NM'][s]}{r}", f"=IF({CLS['RM'][s]}{r}>{cur},1,0)")
             H(f"{CLS['SU'][s]}{r}", f"=IF({CLS['RS'][s]}{r}>{cur},1,0)")
         rs_row = f"{CLS['RS'][0]}{r}:{CLS['RS'][-1]}{r}"
-        H(f"{CLS['SA'][0] if isinstance(CLS['SA'], list) else CLS['SA']}{r}", f'=IF(COUNTIF({rs_row},">0")>0,1,0)')
+        H(f"{CLS['SA']}{r}", f'=IF(COUNTIF({rs_row},">0")>0,1,0)')
         H(f"{CLS['SS']}{r}", f"=IF(SUMPRODUCT(({rs_row}>0)*({rs_row}<={CURROW}))>0,1,0)")
         ok_avail = f'OR({av}="是",{av}="靠后")'
         for k in range(3):
             el = CLS["EL"][k]
             H(f"{el}{r}", (f'=AND({nm}<>"",IF({ref("force")}={k + 1},{nm}=$C$10,'
-                           f'OR({nm}=$C$9,AND({ok_avail},{mn}<=MAX($B$9,{elig_lo[k]})))))'))
+                           f'OR({nm}={CS},AND({ok_avail},{mn}<=MAX($B$9,{elig_lo[k]})))))'))
             H(f"{CLS['CN'][k]}{r}", f'=IF({el}{r},COUNTIF({el}${H0}:{el}{r},TRUE),"")')
         for k in range(4):
             el = CLS["ELU"][k]
-            H(f"{el}{r}", f'=AND({nm}<>"",OR({nm}=$C$9,AND({ok_avail},{mn}<=MAX($B$9,{elig_lo[k]}))))')
+            H(f"{el}{r}", f'=AND({nm}<>"",OR({nm}={CS},AND({ok_avail},{mn}<=MAX($B$9,{elig_lo[k]}))))')
             H(f"{CLS['CNU'][k]}{r}", f'=IF({el}{r},COUNTIF({el}${H0}:{el}{r},TRUE),"")')
 
     # 各窗口候选列表
@@ -593,82 +690,85 @@ def build_main(wb, char_cols, class_cols):
         for i in range(DATA_ROWS):
             r, p = H0 + i, i + 1
             ix = f"{FL[k]['idx']}{r}"
-            H(ix, f"=IFERROR(MATCH({p},{cn},0),0)")
-            H(f"{FL[k]['name']}{r}", f'=IF({ix}=0,"",INDEX({NAMES},{ix}))')
+            H(ix, f"=IFERROR(MATCH({p},{cn},0),{HZ})")
+            H(f"{FL[k]['name']}{r}", f"=INDEX({NAMES},{ix})")
             for j in range(NS):
-                H(f"{FL[k]['C'][j]}{r}", f"=IF({ix}=0,0,INDEX({rng(CLS['G'][j], H0, CLS_LAST)},{ix})*{n_eff[k]})")
+                H(f"{FL[k]['C'][j]}{r}", f"=INDEX({gcol(j)},{ix})*{n_eff[k]}")
     for k in range(4):
         cn = rng(CLS["CNU"][k], H0, CLS_LAST)
         for i in range(DATA_ROWS):
-            H(f"{UL[k]}{H0 + i}", f"=IFERROR(MATCH({i + 1},{cn},0),0)")
+            H(f"{UL[k]}{H0 + i}", f"=IFERROR(MATCH({i + 1},{cn},0),{HZ})")
 
     # ------------------------------------------------------------------
     # 组合枚举（每个区间一个职业）
     # ------------------------------------------------------------------
-    header(ws, 4, list(CMB.keys()), start_col=ws[f"{CMB['i1']}1"].column)
+    header(ws, 4, [k for k in CMB if k != "F"] + STATS, start_col=ws[f"{CMB['i1']}1"].column)
     m1, m2, m3, M = ref("m1"), ref("m2"), ref("m3"), ref("M")
-    si = ref("startIdx")
+    tg = ref("tgtIdx")
     for i in range(COMBO_ROWS):
         r = H0 + i
         ok = f"{i}<{M}"
-        c = {k: f"{v}{r}" for k, v in CMB.items()}
+        c = {k: f"{v}{r}" for k, v in CMB.items() if k != "F"}
+        F = [f"{col}{r}" for col in CMB["F"]]
         H(c["i1"], f"=IF({ok},INT({i}/({m2}*{m3}))+1,1)")
         H(c["i2"], f"=IF({ok},MOD(INT({i}/{m3}),{m2})+1,1)")
         H(c["i3"], f"=IF({ok},MOD({i},{m3})+1,1)")
         H(c["id1"], f"=IF({N[1]}>0,INDEX({FLI[0]},{c['i1']}),{si})")
         H(c["id2"], f"=IF({N[2]}>0,INDEX({FLI[1]},{c['i2']}),{c['id1']})")
         H(c["id3"], f"=IF({N[3]}>0,INDEX({FLI[2]},{c['i3']}),{c['id2']})")
-        ids = [si, c["id1"], c["id2"], c["id3"]]
-        terms = []
-        u = trow(si)
-        for k in range(1, 4):
-            terms.append(f"IF(AND({N[k]}>0,{ids[k]}<>{ids[k - 1]},{ids[k]}<>{si}),{badc(ids[k], u)},0)")
-            u = f"{u}+{trow(ids[k])}"
-        tg = ref("tgtIdx")
-        terms.append(f'IF(AND({N[4]}>0,$C$10<>"",{tg}<>{c["id3"]},{tg}<>{si}),{badc(tg, u)},0)')
-        H(c["bad"], f"=IF({ok},{'+'.join(terms)},0)")
-        id4 = f'IF($C$10<>"",{tg},{c["id3"]})'
-        H(c["low"], (f"=IF({ok},({N[1]}>0)*INDEX({LOWC},{Z(c['id1'])})+({N[2]}>0)*INDEX({LOWC},{Z(c['id2'])})"
-                     f"+({N[3]}>0)*INDEX({LOWC},{Z(c['id3'])})+({N[4]}>0)*INDEX({LOWC},{Z(id4)}),0)"))
-        fin = (f"({START}+INT(({KROW}+INDEX({FLC[0]},{c['i1']},0)+INDEX({FLC[1]},{c['i2']},0)"
-               f"+INDEX({FLC[2]},{c['i3']},0))/100))")
-        mt, sh, tt = met_short_total(fin)
-        H(c["met"], f"=IF({ok},{mt},0)")
-        H(c["short"], f"=IF({ok},{sh},0)")
-        H(c["total"], f"=IF({ok},{tt},0)")
-        H(c["score"], score(f"AND({ok},{ref('listOK')})", c["bad"], c["low"], c["met"], c["short"], c["total"], i))
+        H(c["id4"], f'=IF($C$10<>"",{ref("tgZ")},{c["id3"]})')
+        ids = [si, c["id1"], c["id2"], c["id3"], c["id4"]]
+        # 精通：该职业在路线中累计级数 ≥ Nm，且只在首次出现的区间计一次
+        for k in range(5):
+            lv = "+".join(f"{N[j]}*({ids[j]}={ids[k]})" for j in range(5))
+            first = "".join(f",NOT(AND({N[j]}>0,{ids[j]}={ids[k]}))" for j in range(k))
+            H(c[f"w{k}"], f"=IF(AND({ok},{N[k]}>0{first},{lv}>={Nm},INDEX({MBANY},{ids[k]})=1),1,0)")
+        H(c["low"], "=IF(" + ok + "," + "+".join(f"({N[k]}>0)*INDEX({LOWC},{ids[k]})" for k in range(1, 5)) + ",0)")
+        for j in range(NS):
+            bonus = "+".join(f"{c[f'w{k}']}*INDEX({mbcol(j)},{ids[k]})" for k in range(5))
+            H(F[j], (f"=IF({ok},{SC[j]}$9+INT(({V9[j]}${H0 + 2}+INDEX({flc(0, j)},{c['i1']})"
+                     f"+INDEX({flc(1, j)},{c['i2']})+INDEX({flc(2, j)},{c['i3']}))/100)+{bonus},0)"))
+        eval_cells(c, F, ok)
+        H(c["score"], score(f"AND({ok},{ref('listOK')})", c["low"], c["met"], c["short"], c["total"],
+                            c["combat"], F, i))
 
     # ------------------------------------------------------------------
     # 中途换职优化（基于推荐1，在某个区间内再换一次职业）
     # ------------------------------------------------------------------
-    header(ws, 4, list(REF.keys()), start_col=ws[f"{REF['k']}1"].column)
+    header(ws, 4, [k for k in REF if k != "F"] + STATS, start_col=ws[f"{REF['k']}1"].column)
     Rn = ref("R")
+    sc_full = rng(REF["score"], H0, H0 + REF_ROWS - 1)
     for i in range(REF_ROWS):
         r = H0 + i
         ok = f"{i}<{Rn}"
-        c = {k: f"{v}{r}" for k, v in REF.items()}
+        c = {k: f"{v}{r}" for k, v in REF.items() if k != "F"}
+        F = [f"{col}{r}" for col in REF["F"]]
         k_ = c["k"]
         H(k_, f"=IF({ok},MATCH({i},{OROW},1),1)")
         H(c["j"], f"=IF({ok},INT(({i}-INDEX({OROW},{k_}))/INDEX({NNROW},{k_}))+1,1)")
         H(c["x"], f"=IF({ok},MOD({i}-INDEX({OROW},{k_}),INDEX({NNROW},{k_}))+1,1)")
-        H(c["B"], f"=IF({ok},INDEX({ULMAT},{c['j']},{k_}),0)")
-        P = f"INDEX({PROW},{k_})"
+        H(c["B"], f"=IF({ok},INDEX({ULMAT},{c['j']},{k_}),{HZ})")
+        H(c["P"], f"=INDEX({PROW},{k_})")
+        B, P, x = c["B"], c["P"], c["x"]
         hd = f"INDEX({HEADROW},{k_})"
-        H(c["valid"], (f"=AND({ok},{ref('validT')},{c['B']}>0,{c['B']}<>{P},{c['x']}>=$B$13,"
-                       f"INDEX({NW},{k_})-{c['x']}>=$B$13,"
-                       f"OR({hd}=0,{ref('tgtMin')}<=INDEX({EW},{k_})+{c['x']}))"))
-        u = f"INDEX({UCUM},{k_}+1-{hd},0)"
-        H(c["bad"], f"=IF({c['valid']},{ref('badT')}+IF({c['B']}={si},0,{badc(c['B'], u)}),0)")
-        H(c["low"], f"=IF({c['valid']},{ref('lowT')}+INDEX({LOWC},{Z(c['B'])}),0)")
-        fin = (f"({START}+INT(({KTROW}+{c['x']}*(INDEX({GMAT},{Z(c['B'])},0)-INDEX({GMAT},{Z(P)},0)))/100))")
-        mt, sh, tt = met_short_total(fin)
-        H(c["met"], f"=IF({c['valid']},{mt},0)")
-        H(c["short"], f"=IF({c['valid']},{sh},0)")
-        H(c["total"], f"=IF({c['valid']},{tt},0)")
-        H(c["score"], score(c["valid"], c["bad"], c["low"], c["met"], c["short"], c["total"], i))
+        valid = c["valid"]
+        H(valid, (f"=AND({ok},{ref('validT')},{B}<>{HZ},{B}<>{P},{x}>=$B$13,INDEX({NW},{k_})-{x}>=$B$13,"
+                  f"OR({hd}=0,{ref('tgtMin')}<=INDEX({EW},{k_})+{x}))"))
+        for k in range(5):
+            H(c[f"w{k}"], (f"=IF(AND({valid},{N[k]}>0,{ref(f'bFirst{k}')},INDEX({MBANY},{bIDX[k]})=1,"
+                           f"{ref(f'bLv{k}')}-{x}*({bIDX[k]}={P})+{x}*({bIDX[k]}={B})>={Nm}),1,0)"))
+        inbase = "+".join(f"({N[k]}>0)*({bIDX[k]}={B})" for k in range(5))
+        H(c["wB"], f"=IF(AND({valid},INDEX({MBANY},{B})=1,{x}>={Nm},({inbase})=0),1,0)")
+        H(c["low"], f"=IF({valid},{ref('lowT')}+INDEX({LOWC},{B}),0)")
+        for j in range(NS):
+            bonus = "+".join(f"{c[f'w{k}']}*INDEX({mbcol(j)},{bIDX[k]})" for k in range(5))
+            bonus += f"+{c['wB']}*INDEX({mbcol(j)},{B})"
+            H(F[j], (f"=IF({valid},{SC[j]}$9+INT(({V9[j]}${H0 + 3}+{x}*(INDEX({gcol(j)},{B})"
+                     f"-INDEX({gcol(j)},{P})))/100)+{bonus},0)"))
+        eval_cells(c, F, valid)
+        H(c["score"], score(valid, c["low"], c["met"], c["short"], c["total"], c["combat"], F, i))
         # 同一区间同一职业（连续的 x 行）只保留换职等级最优的一行，避免 Top5 被同职业不同等级占满
-        sc_full = rng(REF["score"], H0, H0 + REF_ROWS - 1)
-        b0 = f"({i}-{c['x']}+2)"
+        b0 = f"({i}-{x}+2)"
         b1 = f"MIN({REF_ROWS},{b0}+INDEX({NNROW},{k_})-1)"
         H(c["best"], (f"=IF({c['score']}>=MAX(INDEX({sc_full},{b0}):INDEX({sc_full},{b1})),"
                       f"{c['score']},-1E+12-{i})"))
@@ -676,58 +776,70 @@ def build_main(wb, char_cols, class_cols):
     # ------------------------------------------------------------------
     # 排名：行5~9 推荐1~5，行10~14 优化1~5；每条路线展开为 6 段（起始等级 FROM / 职业序号 IDX）
     # ------------------------------------------------------------------
-    header(ws, 4, list(k for k in RK.keys() if isinstance(RK[k], str)), start_col=ws[f"{RK['pos']}1"].column)
+    rk_hdr = [k for k in RK if isinstance(RK[k], str)]
+    header(ws, 4, rk_hdr, start_col=ws[f"{RK['pos']}1"].column)
     csc = rng(CMB["score"], H0, H0 + COMBO_ROWS - 1)
     rsc = rng(REF["best"], H0, H0 + REF_ROWS - 1)
-    base_r = H0
     for rr in range(10):
         r = H0 + rr
         is_opt = rr >= 5
         rank = rr % 5 + 1
-        c = {k: f"${v}${r}" for k, v in RK.items() if isinstance(v, str)}
+        c = {k: f"{v}{r}" for k, v in RK.items() if isinstance(v, str)}
+        a = {k: f"${v}${r}" for k, v in RK.items() if isinstance(v, str)}
         src, sc_ = (REF, rsc) if is_opt else (CMB, csc)
         top = H0 + (REF_ROWS if is_opt else COMBO_ROWS) - 1
-        H(c["pos"][1:].replace("$", ""), f"=MATCH(LARGE({sc_},{rank}),{sc_},0)")
-        H(c["valid"].replace("$", ""), f"=INDEX({sc_},{c['pos']})>-1E+11")
-        for key in ("met", "short", "total", "bad", "low"):
-            H(c[key].replace("$", ""), f"=INDEX({rng(src[key], H0, top)},{c['pos']})")
+        H(c["pos"], f"=MATCH(LARGE({sc_},{rank}),{sc_},0)")
+        H(c["valid"], f"=INDEX({sc_},{a['pos']})>-1E+10")
+        for key in ("met", "short", "total", "low", "combat"):
+            H(c[key], f"=INDEX({rng(src[key], H0, top)},{a['pos']})")
+        for j in range(NS):
+            H(f"{RK['F'][j]}{r}", f"=INDEX({rng(src['F'][j], H0, top)},{a['pos']})")
         FROM = [f"${v}${r}" for v in RK["FROM"]]
         IDX = [f"${v}${r}" for v in RK["IDX"]]
+        wget = lambda key: f"INDEX({rng(src[key], H0, top)},{a['pos']})"
         if not is_opt:
             for key in ("i1", "i2", "i3"):
-                H(c[key].replace("$", ""), f"=INDEX({rng(CMB[key], H0, top)},{c['pos']})")
-            H(IDX[0].replace("$", ""), f"={si}")
-            for k in (1, 2, 3):
-                H(IDX[k].replace("$", ""), f"=INDEX({rng(CMB[f'id{k}'], H0, top)},{c['pos']})")
-            H(IDX[4].replace("$", ""), f'=IF($C$10<>"",{ref("tgtIdx")},{IDX[3]})')
-            H(IDX[5].replace("$", ""), f"={IDX[4]}")
+                H(c[key], f"=INDEX({rng(CMB[key], H0, top)},{a['pos']})")
+            H(IDX[0][1:].replace("$", ""), f"={si}")
+            for k in (1, 2, 3, 4):
+                H(IDX[k][1:].replace("$", ""), f"=INDEX({rng(CMB[f'id{k}'], H0, top)},{a['pos']})")
+            H(IDX[5][1:].replace("$", ""), f"={IDX[4]}")
             for k in range(5):
-                H(FROM[k].replace("$", ""), f"={E[k]}")
-            H(FROM[5].replace("$", ""), "=999")
+                H(FROM[k][1:].replace("$", ""), f"={E[k]}")
+            H(FROM[5][1:].replace("$", ""), "=999")
+            H(c["mtxt"], "=" + "&".join(f'IF({wget(f"w{k}")}=1,INDEX({MBTXT},{Z(IDX[k])})&" ","")' for k in range(5)))
         else:
             for key in ("k", "x", "B"):
-                H(c[key].replace("$", ""), f"=INDEX({rng(REF[key], H0, top)},{c['pos']})")
-            k_ = c["k"]
-            H(c["P"].replace("$", ""), f"=INDEX({PROW},{k_})")
-            H(c["head"].replace("$", ""), f"=INDEX({HEADROW},{k_})")
-            H(c["split"].replace("$", ""),
-              f"=INDEX({EW},{k_})+IF({c['head']}=1,{c['x']},INDEX({NW},{k_})-{c['x']})")
-            H(c["first"].replace("$", ""), f"=IF({c['head']}=1,{c['B']},{c['P']})")
-            H(c["second"].replace("$", ""), f"=IF({c['head']}=1,{c['P']},{c['B']})")
-            bIDX = [f"${v}${base_r}" for v in RK["IDX"]]
-            bFROM = [f"${v}${base_r}" for v in RK["FROM"]]
+                H(c[key], f"=INDEX({rng(REF[key], H0, top)},{a['pos']})")
+            k_ = a["k"]
+            H(c["P"], f"=INDEX({PROW},{k_})")
+            H(c["head"], f"=INDEX({HEADROW},{k_})")
+            H(c["split"], f"=INDEX({EW},{k_})+IF({a['head']}=1,{a['x']},INDEX({NW},{k_})-{a['x']})")
+            H(c["first"], f"=IF({a['head']}=1,{a['B']},{a['P']})")
+            H(c["second"], f"=IF({a['head']}=1,{a['P']},{a['B']})")
+            bFROM = [f"${v}${H0}" for v in RK["FROM"]]
+            bIDX6 = [f"${v}${H0}" for v in RK["IDX"]]
             for i in range(6):
                 prev = max(i - 1, 0)
-                H(IDX[i].replace("$", ""),
-                  f"=IF({i}<{k_},{bIDX[i]},IF({i}={k_},{c['first']},IF({i}={k_}+1,{c['second']},{bIDX[prev]})))")
-                H(FROM[i].replace("$", ""),
-                  f"=IF({i}<{k_},{bFROM[i]},IF({i}={k_},{bFROM[min(i, 4)]},IF({i}={k_}+1,{c['split']},{bFROM[prev]})))")
+                H(IDX[i][1:].replace("$", ""),
+                  f"=IF({i}<{k_},{bIDX6[i]},IF({i}={k_},{a['first']},IF({i}={k_}+1,{a['second']},{bIDX6[prev]})))")
+                H(FROM[i][1:].replace("$", ""),
+                  f"=IF({i}<{k_},{bFROM[i]},IF({i}={k_},{bFROM[min(i, 4)]},IF({i}={k_}+1,{a['split']},{bFROM[prev]})))")
+            H(c["mtxt"], "=" + "&".join(f'IF({wget(f"w{k}")}=1,INDEX({MBTXT},{Z(bIDX[k])})&" ","")' for k in range(5))
+              + f'&IF({wget("wB")}=1,INDEX({MBTXT},{Z(a["B"])})&" ","")')
         NAME = [f"${v}${r}" for v in RK["NAME"]]
         NN_ = [f"${v}${r}" for v in RK["N"]]
         for i in range(6):
-            H(NAME[i].replace("$", ""), f'=IF({IDX[i]}=0,{"$C$9" if i == 0 else chr(34) * 2},INDEX({NAMES},{IDX[i]}))')
+            H(NAME[i][1:].replace("$", ""), f'=IF(OR({IDX[i]}=0,{IDX[i]}={HZ}),{CS if i == 0 else chr(34) * 2},INDEX({NAMES},{IDX[i]}))')
             nxt = FROM[i + 1] if i < 5 else "999"
-            H(NN_[i].replace("$", ""), f"=MAX(0,MIN($B$10,{nxt})-MAX($B$9,{FROM[i]}))")
+            H(NN_[i][1:].replace("$", ""), f"=MAX(0,MIN($B$10,{nxt})-MAX($B$9,{FROM[i]}))")
+        # 熟练度提示（只对展示的路线计算）：转入之前没待过的职业时，所需熟练度是否能在之前的职业练
+        terms, u = [], trow(IDX[0])
+        for j in range(1, 6):
+            seen = "".join(f",NOT(AND({NN_[i]}>0,{IDX[i]}={IDX[j]}))" for i in range(j))
+            terms.append(f"IF(AND({NN_[j]}>0,{IDX[j]}<>{si}{seen}),{badc(IDX[j], u)},0)")
+            u = f"{u}+{trow(IDX[j])}"
+        H(c["bad"], "=" + "+".join(terms))
 
     # ------------------------------------------------------------------
     # 可见区：③ 推荐 / ③+ 优化
@@ -742,11 +854,12 @@ def build_main(wb, char_cols, class_cols):
                          f'"Lv"&MAX($B$9,{FROM[i]})&" "&{NAME[i]}&" → ","")')
         return "&".join(parts) + '&"Lv"&$B$10&" 完成"'
 
+    cn_ = ref("combatN")
     for block, (rsec, rhdr, r0, title) in enumerate(
-            ((R_BSEC, R_BHDR, R_B0, "③ 推荐路线 Top5（每个区间一个职业；排序：熟练度可行 ＞ 达成项数 ＞ 不含靠后职业 ＞ 缺口最小 ＞ 属性总和最大）"),
+            ((R_BSEC, R_BHDR, R_B0, "③ 推荐路线 Top5（每个区间一个职业；排序：达成项 ＞ 实战评估 ＞ 不含靠后职业 ＞ 缺口小 ＞ 力/魔高 ＞ 属性总和；属性含精通加成；熟练度仅提示）"),
              (R_OSEC, R_OHDR, R_O0, "③+ 中途换职优化 Top5（在推荐1的某个区间中途再换一次职业，枚举换哪个职业、第几级换）"))):
         section(ws, rsec, title, LAST_VIS)
-        header(ws, rhdr, ["方案", "达成项", "缺口合计"] + STATS + ["路线（LvX 职业 = 从该等级起在此职业升级）", "熟练度", "备注"])
+        header(ws, rhdr, ["方案", "达成项", "缺口合计"] + STATS + ["路线（LvX 职业 = 从该等级起在此职业升级）", "熟练度/精通", "实战评估 / 备注"])
         ws.merge_cells(f"O{rhdr}:{LAST_VIS}{rhdr}")
         for i in range(5):
             r, hr = r0 + i, H0 + block * 5 + i
@@ -755,25 +868,19 @@ def build_main(wb, char_cols, class_cols):
             ws[f"B{r}"] = f'=IF({c["valid"]},{c["met"]}&"/"&{ref("tgtCnt")},"—")'
             ws[f"C{r}"] = f'=IF({c["valid"]},{c["short"]},"")'
             for j in range(NS):
-                if block == 0:
-                    ws[f"{SC[j]}{r}"] = (f'=IF({c["valid"]},{SC[j]}$9+INT(({V9[j]}${H0 + 2}'
-                                         f'+INDEX({rng(FL[0]["C"][j], H0, H0 + DATA_ROWS - 1)},{c["i1"]})'
-                                         f'+INDEX({rng(FL[1]["C"][j], H0, H0 + DATA_ROWS - 1)},{c["i2"]})'
-                                         f'+INDEX({rng(FL[2]["C"][j], H0, H0 + DATA_ROWS - 1)},{c["i3"]}))/100),"")')
-                else:
-                    g = rng(CLS["G"][j], H0, CLS_LAST)
-                    ws[f"{SC[j]}{r}"] = (f'=IF({c["valid"]},{SC[j]}$9+INT(({V9[j]}${H0 + 3}+{c["x"]}*'
-                                         f'(INDEX({g},{Z(c["B"])})-INDEX({g},{Z(c["P"])})))/100),"")')
+                ws[f"{SC[j]}{r}"] = f'=IF({c["valid"]},${RK["F"][j]}${hr},"")'
             none_txt = ('"无可行组合"' if i == 0 else '"—"')
             ws[f"M{r}"] = f"=IF({c['valid']},{route_text(hr)},{none_txt})"
-            ws[f"N{r}"] = (f'=IF({c["valid"]},IF({c["bad"]}=0,"✓ 熟练度可行","✗ "&{c["bad"]}&"项熟练度无法练成")'
-                           f'&IF({c["low"]}>0,"·含靠后职业",""),"")')
+            ws[f"N{r}"] = (f'=IF({c["valid"]},IF({c["bad"]}=0,"✓ 熟练度可行","⚠ "&{c["bad"]}&"项熟练度需注意")'
+                           f'&IF({c["low"]}>0,"·含靠后职业","")&IF({c["mtxt"]}<>""," · 精通:"&{c["mtxt"]},""),"")')
             ws.merge_cells(f"O{r}:{LAST_VIS}{r}")
+            cmb_txt = f'IF({cn_}>0,"实战 "&{c["combat"]}&"/"&{cn_}&" 项通过","")'
             if block == 0:
-                ws[f"O{r}"] = "基准路线（下方「优化」在此基础上中途换职）" if i == 0 else None
+                tail = '&"（基准路线，下方「优化」在此基础上中途换职）"' if i == 0 else ""
+                ws[f"O{r}"] = f'=IF({c["valid"]},{cmb_txt}{tail},"")'
             else:
                 b = {k: f"${RK[k]}${H0}" for k in ("met", "short", "total")}
-                ws[f"O{r}"] = (f'=IF({c["valid"]},"对比推荐1：达成"&TEXT({c["met"]}-{b["met"]},"+0;-0;0")'
+                ws[f"O{r}"] = (f'=IF({c["valid"]},{cmb_txt}&"｜对比推荐1：达成"&TEXT({c["met"]}-{b["met"]},"+0;-0;0")'
                                f'&"，缺口"&TEXT({c["short"]}-{b["short"]},"+0;-0;0")'
                                f'&"，属性总和"&TEXT({c["total"]}-{b["total"]},"+0;-0;0"),"")')
             style_range(ws, f"A{r}:{LAST_VIS}{r}", align=center)
@@ -795,12 +902,14 @@ def build_main(wb, char_cols, class_cols):
         r, mr = H0 + j, R_M0 + j
         if j == 0:
             H(f"{MAN['from']}{r}", "=$B$9")
-            H(f"{MAN['name']}{r}", "=$C$9")
+            H(f"{MAN['name']}{r}", f"={CS}")
             H(f"{MAN['idx']}{r}", f"={si}")
         else:
             H(f"{MAN['from']}{r}", f'=IF($B{mr}="",999,$B{mr})')
             H(f"{MAN['name']}{r}", f'=IF($B{mr}="","",$C{mr})')
             H(f"{MAN['idx']}{r}", f"=IFERROR(MATCH({MAN['name']}{r},{NAMES},0),0)")
+    seg_idx = rng(SEG["idx"], H0, H0 + 5)
+    seg_n = rng(SEG["n"], H0, H0 + 5)
     for G_ in (SEG, MAN):
         for j in range(6):
             r = H0 + j
@@ -823,16 +932,27 @@ def build_main(wb, char_cols, class_cols):
                 rm_ = rng(CLS["RM"][s], H0, CLS_LAST)
                 rs_ = rng(CLS["RS"][s], H0, CLS_LAST)
                 pieces.append(f'IF(INDEX({nm_},{ix})=1,"{SKILLS[s]}"&INDEX({RANKROW},1,INDEX({rm_},{ix}))'
-                              f'&IF({can},"(可练) ","(✗无法练) "),"")')
-                # 选一：有能练的就只列能练的；一个都练不了才全部标 ✗
+                              f'&IF({can},"(可练) ","(之前职业练不了) "),"")')
+                # 选一：有能练的就只列能练的；一个都练不了才全部列出
                 sel_pieces.append(f'IF(AND(INDEX({su_},{ix})=1,OR({scan}=FALSE,{can})),'
                                   f'"{SKILLS[s]}"&INDEX({RANKROW},1,INDEX({rs_},{ix}))'
-                                  f'&IF({can},"(可练) ","(✗) "),"")')
+                                  f'&IF({can},"(可练) ","(之前职业练不了) "),"")')
                 scan_terms.append(f"AND(INDEX({su_},{ix})=1,{can})")
             H(scan, "=OR(" + ",".join(scan_terms) + ")")
             H(f"{G_['piece']}{r}", ("=" + "&".join(pieces)
                                     + f'&IF(AND(INDEX({SAC},{ix})=1,INDEX({SSC},{ix})=0),"｜选一："&'
                                     + "&".join(sel_pieces) + ',"")'))
+    for j in range(6):
+        r = H0 + j
+        idx_j, n_j = f"{SEG['idx']}{r}", f"{SEG['n']}{r}"
+        H(f"{SEG['lv']}{r}", f"=SUMPRODUCT(({seg_idx}={idx_j})*{seg_n})")
+        if j == 0:
+            H(f"{SEG['first']}{r}", "=TRUE")
+        else:
+            H(f"{SEG['first']}{r}", (f"=SUMPRODUCT(({SEG['idx']}${H0}:{SEG['idx']}{r - 1}={idx_j})"
+                                     f"*({SEG['n']}${H0}:{SEG['n']}{r - 1}>0))=0"))
+        H(f"{SEG['w']}{r}", (f"=IF(AND({n_j}>0,{SEG['first']}{r},{SEG['lv']}{r}>={Nm},"
+                             f"INDEX({MBANY},{Z(idx_j)})=1),1,0)"))
 
     def req_cells(r, G_, hr, n_ref):
         """N=所需熟练度，O=熟练度检查，P=解锁条件"""
@@ -841,16 +961,15 @@ def build_main(wb, char_cols, class_cols):
         s_ = f"INDEX({class_col(C_SEL)},{ix})"
         m_none, s_none = f'OR({m}="",{m}="—")', f'OR({s_}="",{s_}="—")'
         idx = f"${G_['idx']}${hr}"
-        ws[f"N{r}"] = (f'=IF({n_ref}=0,"",IF({idx}=0,"",IF(AND({m_none},{s_none}),"无",'
+        ws[f"N{r}"] = (f'=IF({n_ref}=0,"",IF(OR({idx}=0,{idx}={HZ}),"",IF(AND({m_none},{s_none}),"无",'
                        f'IF({m_none},"",{m})&IF({s_none},"",IF({m_none},"","；")&"选一："&{s_}))))')
         piece = f"${G_['piece']}${hr}"
-        ws[f"O{r}"] = (f'=IF({n_ref}=0,"",IF({idx}=0,"⚠ 职业不在职业表",'
+        ws[f"O{r}"] = (f'=IF({n_ref}=0,"",IF(OR({idx}=0,{idx}={HZ}),"⚠ 职业不在职业表",'
                        f'IF(OR({idx}=${G_["prev"]}${hr},{idx}={si}),"—（已在该职业）",'
-                       f'IF({piece}="","✓ 满足",IF(ISNUMBER(SEARCH("✗",{piece})),"✗ 无法满足：","需练：")'
-                       f'&IF(LEFT({piece},1)="｜",MID({piece},2,999),{piece})))))')
+                       f'IF({piece}="","✓ 满足","需练："&IF(LEFT({piece},1)="｜",MID({piece},2,999),{piece})))))')
         cond = f"INDEX({class_col(C_COND)},{ix})"
         unl = f"INDEX({class_col(C_UNLOCK)},{ix})"
-        ws[f"P{r}"] = (f'=IF({n_ref}=0,"",IF({idx}=0,"",TRIM(SUBSTITUTE({cond},CHAR(10)," "))'
+        ws[f"P{r}"] = (f'=IF({n_ref}=0,"",IF(OR({idx}=0,{idx}={HZ}),"",TRIM(SUBSTITUTE({cond},CHAR(10)," "))'
                        f'&IF(OR({unl}="",{unl}="—"),"","；"&{unl})))')
 
     # ④ 当前显示路线
@@ -858,7 +977,7 @@ def build_main(wb, char_cols, class_cols):
     header(ws, R_SHDR, ["阶段", "起始等级", "职业", "结束等级", "升级次数"])
     ws.merge_cells(f"F{R_SHDR}:M{R_SHDR}")
     header(ws, R_SHDR, ["说明"], start_col=6)
-    header(ws, R_SHDR, ["所需熟练度", "熟练度检查（可练=之前的职业能练）", "解锁条件"], start_col=14)
+    header(ws, R_SHDR, ["所需熟练度", "熟练度提示（可练=之前的职业能练）", "解锁条件"], start_col=14)
     for j in range(6):
         r, hr = R_S0 + j, H0 + j
         n = f"${SEG['n']}${hr}"
@@ -867,11 +986,12 @@ def build_main(wb, char_cols, class_cols):
         ws[f"C{r}"] = f'=IF({n}>0,${SEG["name"]}${hr},"")'
         ws[f"D{r}"] = f'=IF({n}>0,B{r}+{n},"")'
         ws[f"E{r}"] = f'=IF({n}>0,{n},"")'
-        prev_name = "$C$9" if j == 0 else f"${SEG['name']}${hr - 1}"
+        prev_name = CS if j == 0 else f"${SEG['name']}${hr - 1}"
         ws.merge_cells(f"F{r}:M{r}")
-        ws[f"F{r}"] = (f'=IF({n}>0,"Lv"&B{r}&IF(B{r}=$B$9,IF(C{r}=$C$9," 以【"&C{r}&"】起步"," 立即转职为【"&C{r}&"】"),'
+        ws[f"F{r}"] = (f'=IF({n}>0,"Lv"&B{r}&IF(B{r}=$B$9,IF(C{r}={CS}," 以【"&C{r}&"】起步"," 立即转职为【"&C{r}&"】"),'
                        f'IF(C{r}={prev_name}," 继续【"&C{r}&"】"," 转职为【"&C{r}&"】"))'
-                       f'&"，在该职业升 "&{n}&" 级 → Lv"&D{r},"")')
+                       f'&"，在该职业升 "&{n}&" 级 → Lv"&D{r}'
+                       f'&IF(${SEG["w"]}${hr}=1,"；累计练满"&{Nm}&"级可精通："&INDEX({MBTXT},{Z(f"${SEGI}${hr}")}),""),"")')
         req_cells(r, SEG, hr, n)
         style_range(ws, f"A{r}:{LAST_VIS}{r}", align=center)
         for col in "FNOP":
@@ -880,34 +1000,83 @@ def build_main(wb, char_cols, class_cols):
         ws.row_dimensions[r].height = 30
 
     # 最终属性对比
-    section(ws, R_FSEC, "最终属性对比（当前显示路线，目标等级时）", LAST_VIS)
+    section(ws, R_FSEC, "最终属性对比（当前显示路线，目标等级时；「最终」= 成长结果 + 精通加成）", LAST_VIS)
     header(ws, R_FHDR, ["项目", "", ""] + STATS)
-    for r, t in zip(range(R_F0, R_F0 + 4), ["路线结果", "目标", "差值", "判定"]):
-        ws.cell(r, 1, t).font = f_bold
+    rows_f = ["成长结果", "精通加成", "最终", "目标", "差值", "判定"]
+    for k, t in enumerate(rows_f):
+        ws.cell(R_F0 + k, 1, t).font = f_bold
+    rg, rb, rf, rt, rd, rj = (R_F0 + k for k in range(6))
     for j in range(NS):
         s = SC[j]
-        ws[f"{s}{R_F0}"] = f'=IFERROR(INDEX({s}${R_T0}:{s}${R_TLAST},$B$10-$B$9+1),"")'
-        ws[f"{s}{R_F0 + 1}"] = f'=IF({s}$10="","",{s}$10)'
-        ws[f"{s}{R_F0 + 2}"] = f'=IF(OR({s}{R_F0 + 1}="",{s}{R_F0}=""),"",{s}{R_F0}-{s}{R_F0 + 1})'
-        ws[f"{s}{R_F0 + 3}"] = f'=IF({s}{R_F0 + 2}="","—",IF({s}{R_F0 + 2}>=0,"✓","✗ 差"&-{s}{R_F0 + 2}))'
-    ws.merge_cells(f"B{R_F0 + 3}:C{R_F0 + 3}")
-    ws[f"B{R_F0 + 3}"] = f'=COUNTIF(D{R_F0 + 3}:L{R_F0 + 3},"✓")&" / "&{ref("tgtCnt")}&" 项达成"'
-    ws[f"B{R_F0 + 3}"].font = f_bold
-    style_range(ws, f"A{R_F0}:L{R_F0 + 3}", align=center)
+        ws[f"{s}{rg}"] = f'=IFERROR(INDEX({s}${R_T0}:{s}${R_TLAST},$B$10-$B$9+1),"")'
+        ws[f"{s}{rb}"] = f'=IF({V9[j]}${H0 + 4}=0,"",{V9[j]}${H0 + 4})'
+        ws[f"{s}{rf}"] = f'=IF({s}{rg}="","",{s}{rg}+N({s}{rb}))'
+        ws[f"{s}{rt}"] = f'=IF({s}$10="","",{s}$10)'
+        ws[f"{s}{rd}"] = f'=IF(OR({s}{rt}="",{s}{rf}=""),"",{s}{rf}-{s}{rt})'
+        ws[f"{s}{rj}"] = (f'=IF({s}{rd}="","—",IF({s}{rd}>=0,IF({s}{rg}>={s}{rt},"✓","✓(含精通)"),'
+                          f'"✗ 差"&-{s}{rd}))')
+    ws.merge_cells(f"B{rj}:C{rj}")
+    ws[f"B{rj}"] = f'=COUNTIF(D{rj}:L{rj},"✓*")&" / "&{ref("tgtCnt")}&" 项达成"'
+    ws[f"B{rj}"].font = f_bold
+    style_range(ws, f"A{R_F0}:L{rj}", align=center)
+    for col in SC:
+        ws[f"{col}{rf}"].font = f_bold
+
+    # 实战评估
+    section(ws, R_ESEC, "实战评估（当前显示路线的最终属性 vs 右上⑦敌方参考值；仅作参考，最终选择由玩家决定）", LAST_VIS)
+    fv = {j: f"${SC[j]}${rf}" for j in range(NS)}
+    t, fa, fr, eD = ref("typeMag"), ref("fast"), ref("front"), ref("eD")
+    spd, es = fv[I_SPD], EN["spd"]
+    atk = f"IF({t}=1,{fv[I_MAG]},{fv[I_STR]})"
+    dmg = f"({atk}+N({EN['might']})-{eD})"
+    can_double = f"AND({es}<>\"\",{spd}-{es}>=4)"
+    eval_rows = [
+        ("速度", (f'=IF(OR({es}="",{spd}=""),"—（未填敌方速度）",IF({fa}=1,"【高速·追击】"&IF({spd}-{es}>=4,'
+                f'"✓ 可追击：速度"&{spd}&" vs 敌"&{es}&"（差+"&({spd}-{es})&"，≥4）",'
+                f'"✗ 追击不足：速度"&{spd}&" vs 敌"&{es}&"，还差"&(4-({spd}-{es}))&"点"),'
+                f'"【低速·防追】"&IF({es}-{spd}<4,"✓ 不会被追击：速度"&{spd}&" vs 敌"&{es},'
+                f'"✗ 会被追击：速度"&{spd}&" vs 敌"&{es}&"，还差"&({es}-{spd}-3)&"点")))')),
+        ("攻击", (f'=IF(OR({eD}="",{spd}=""),"—（未填敌方防御）",IF({t}=1,"【魔法】魔力","【物理】力量")&{atk}'
+                f'&"+威力"&N({EN["might"]})&" − 敌"&IF({t}=1,"魔防","防守")&{eD}&" = "&{dmg}&" → "'
+                f'&IF({dmg}>0,"✓ 破甲，每击"&{dmg}&IF({can_double},"，可追击共"&2*{dmg},""),'
+                f'"✗ 未破甲，还差"&(1-{dmg})&"点"))')),
+        ("物防", (f'=IF({fr}=0,"—（非前排，不评估）",IF(OR({EN["patk"]}="",{fv[I_DEF]}=""),"—（未填敌方物理攻击）",'
+                f'IF({fv[I_DEF]}>={EN["patk"]}-5,"✓ 防守"&{fv[I_DEF]}&" ≥ 敌物攻"&{EN["patk"]}&"−5，每击受伤"&MAX(0,{EN["patk"]}-{fv[I_DEF]}),'
+                f'"✗ 防守"&{fv[I_DEF]}&"，距 敌物攻−5 还差"&({EN["patk"]}-5-{fv[I_DEF]})&"点")))')),
+        ("魔防", (f'=IF({fr}=0,"—（非前排，不评估）",IF(OR({EN["matk"]}="",{fv[I_RES]}=""),"—（未填敌方魔法攻击）",'
+                f'IF({fv[I_RES]}>={EN["matk"]}-5,"✓ 魔防"&{fv[I_RES]}&" ≥ 敌魔攻"&{EN["matk"]}&"−5，每击受伤"&MAX(0,{EN["matk"]}-{fv[I_RES]}),'
+                f'"✗ 魔防"&{fv[I_RES]}&"，距 敌魔攻−5 还差"&({EN["matk"]}-5-{fv[I_RES]})&"点")))')),
+    ]
+    for k, (label, f) in enumerate(eval_rows):
+        r = R_E0 + k
+        ws.cell(r, 1, label).font = f_bold
+        ws.merge_cells(f"B{r}:{LAST_VIS}{r}")
+        ws[f"B{r}"] = f
+        style_range(ws, f"A{r}:{LAST_VIS}{r}", align=left_nowrap)
+        ws[f"A{r}"].alignment = center
+    r = R_E0 + 4
+    ws.cell(r, 1, "综合").font = f_bold
+    ws.merge_cells(f"B{r}:{LAST_VIS}{r}")
+    ws[f"B{r}"] = (f'=IF({cn_}=0,"未填敌方参考值",IF({fv[0]}="","","实战评估 "&({combat([fv[j] for j in range(NS)])})'
+                   f'&" / "&{cn_}&" 项通过"))&"　｜定位："&IF({t}=1,"魔法","物理")&" · "&IF({fa}=1,"高速追击","低速防追")'
+                   f'&" · "&IF({fr}=1,"前排","非前排")&"　｜力/魔越高越好，推荐排序已考虑以上各项"')
+    style_range(ws, f"A{r}:{LAST_VIS}{r}", align=left_nowrap)
+    ws[f"A{r}"].alignment = center
+    ws[f"B{r}"].font = f_bold
 
     # ⑤ 手动路线
     section(ws, R_MSEC, "⑤ 手动路线（「显示路线」选「手动」时生效：自己填几级转什么职业，下方逐级表会按此计算）", LAST_VIS)
     header(ws, R_MHDR, ["段", "转职等级", "职业"])
     ws.merge_cells(f"D{R_MHDR}:M{R_MHDR}")
     header(ws, R_MHDR, ["说明"], start_col=4)
-    header(ws, R_MHDR, ["所需熟练度", "熟练度检查（可练=之前的职业能练）", "解锁条件"], start_col=14)
+    header(ws, R_MHDR, ["所需熟练度", "熟练度提示（可练=之前的职业能练）", "解锁条件"], start_col=14)
     for j in range(6):
         r, hr = R_M0 + j, H0 + j
         ws.cell(r, 1, f"段{j + 1}").font = f_bold
         ws.merge_cells(f"D{r}:M{r}")
         if j == 0:
             ws[f"B{r}"] = "=$B$9"
-            ws[f"C{r}"] = "=$C$9"
+            ws[f"C{r}"] = f"={CS}"
             ws[f"D{r}"] = "起点（自动取上方起点等级/职业）"
             style_range(ws, f"B{r}:C{r}", fill=fill_grey, align=center)
         else:
@@ -922,7 +1091,7 @@ def build_main(wb, char_cols, class_cols):
     ws[f"B{R_M0 + 2}"], ws[f"C{R_M0 + 2}"] = 35, "狙击手"
 
     # ⑥ 逐级成长表
-    section(ws, R_TSEC, "⑥ 逐级成长表（当前显示路线；绿色=该级属性+1，黄色行=转职）", LAST_VIS)
+    section(ws, R_TSEC, "⑥ 逐级成长表（当前显示路线的成长值，不含精通加成；绿色=该级属性+1，黄色行=转职）", LAST_VIS)
     header(ws, R_THDR, ["等级", "阶段", "职业"] + STATS + ["备注"])
     seg_from = rng(SEG["from"], H0, H0 + 5)
     for i in range(TL_ROWS):
@@ -930,19 +1099,18 @@ def build_main(wb, char_cols, class_cols):
         ws[f"A{r}"] = f'=IF(OR($B$9="",$B$10=""),"",IF($B$9+{i}<=$B$10,$B$9+{i},""))'
         ws[f"B{r}"] = f'=IF($A{r}="","",MATCH($A{r},{seg_from},1))'
         ws[f"C{r}"] = f'=IF($A{r}="","",INDEX({rng(SEG["name"], H0, H0 + 5)},$B{r}))'
-        H(f"{TLH['idx']}{r}", f'=IF($A{r}="",0,INDEX({rng(SEG["idx"], H0, H0 + 5)},$B{r}))')
+        H(f"{TLH['idx']}{r}", f'=IF($A{r}="",0,INDEX({seg_idx},$B{r}))')
         for j in range(NS):
             cum = TLH["cum"][j]
-            g = rng(CLS["G"][j], H0, CLS_LAST)
             if i == 0:
                 H(f"{cum}{r}", f'=IF($A{r}="","",0)')
             else:
-                H(f"{cum}{r}", (f'=IF($A{r}="","",{cum}{r - 1}+IF(${TLH["idx"]}{r - 1}=0,MAX(0,{SC[j]}$7),'
-                                f'INDEX({g},${TLH["idx"]}{r - 1})))'))
+                H(f"{cum}{r}", (f'=IF($A{r}="","",{cum}{r - 1}+IF(OR(${TLH["idx"]}{r - 1}=0,${TLH["idx"]}{r - 1}={HZ}),MAX(0,{SC[j]}$7),'
+                                f'INDEX({gcol(j)},${TLH["idx"]}{r - 1})))'))
             ws[f"{SC[j]}{r}"] = f'=IF($A{r}="","",{SC[j]}$9+INT(($B$14+{cum}{r})/100))'
         if i == 0:
-            ws[f"M{r}"] = (f'=IF($A{r}="","",IF($C{r}=$C$9,"起点：【"&$C{r}&"】",'
-                           f'"起点：【"&$C$9&"】 ★ 立即转职 → 【"&$C{r}&"】"))')
+            ws[f"M{r}"] = (f'=IF($A{r}="","",IF($C{r}={CS},"起点：【"&$C{r}&"】",'
+                           f'"起点：【"&{CS}&"】 ★ 立即转职 → 【"&$C{r}&"】"))')
         else:
             ws[f"M{r}"] = (f'=IF($A{r}="","",IF($C{r}<>$C{r - 1},"★ 转职 → 【"&$C{r}&"】","")'
                            f'&IF($A{r}=$B$10,"（目标等级）",""))')
@@ -957,17 +1125,15 @@ def build_main(wb, char_cols, class_cols):
     ws["A15"] = (
         '=IF(OR($B$9="",$B$10=""),"⚠ 请填写起点等级和目标等级；",IF($B$10<=$B$9,"⚠ 目标等级必须大于起点等级；",""))'
         f'&IF($B$10-$B$9>{TL_ROWS - 1},"⚠ 等级跨度超过{TL_ROWS - 1}，逐级表只显示前{TL_ROWS}级；","")'
-        f'&IF({si}=0,"⚠ 起点职业不在职业表中（补正按0计）；","")'
+        f'&IF({si}={HZ},"⚠ 起点职业「"&{CS}&"」不在职业表中（补正按0计），请在C9选择起点职业；","")'
         f'&IF(AND($C$10<>"",{ref("tgtIdx")}=0),"⚠ 目标职业不在职业表中；","")'
         f'&IF(AND({ref("tgtIdx")}>0,{elv}<{tmin}),"⚠ 目标职业最低转职等级为Lv"&{tmin}&"，但按目标等级只能在Lv"&{elv}&"转入；","")'
         f'&IF({M}>{COMBO_ROWS},"⚠ 候选组合"&{M}&"个，超过{COMBO_ROWS}，只搜索了前{COMBO_ROWS}个（可把用不到的职业设为「否」）；","")'
         f'&IF({Rn}>{REF_ROWS},"⚠ 中途换职候选"&{Rn}&"个，超过{REF_ROWS}，只搜索了前{REF_ROWS}个；","")'
         f'&IF(NOT({ref("listOK")}),"⚠ 某个阶段没有可选职业，请检查职业表「纳入推荐」；","")'
         f'&IF(NOT({ref("validT")}),"⚠ 没有可行的推荐路线；","")'
-        f'&IF(AND({ref("validT")},{ref("badT")}>0),"⚠ 所有推荐路线都有练不成的熟练度，目标职业可能无法转入（请检查②熟练度或更换目标职业）；","")'
         f'&IF(AND({sel}=0,{ref("manualBad")}),"⚠ 手动路线的转职等级需从上到下递增、中间不要空行；","")'
-        f'&IF({ref("rankMissing")},"⚠ 该角色没有熟练度数据，按E计算，建议在②填写当前熟练度；","")'
-        f'&IF(COUNTIF(O{R_S0}:O{R_S0 + 5},"*✗*")>0,"⚠ 当前显示路线有无法练成的熟练度（见④）；","")'
+        f'&IF({ref("rankMissing")},"提示：该角色没有熟练度数据，按E计算，可在②填写当前熟练度；","")'
     )
     ws["A15"].font = f_warn
     ws["A15"].alignment = left_nowrap
@@ -977,29 +1143,30 @@ def build_main(wb, char_cols, class_cols):
     # ------------------------------------------------------------------
     green = PatternFill("solid", fgColor="C6EFCE")
     red = PatternFill("solid", fgColor="FFC7CE")
-    yellow = PatternFill("solid", fgColor="FFF2CC")
-    gfont, rfont = Font(color="006100", bold=True), Font(color="9C0006", bold=True)
+    yellow = PatternFill("solid", fgColor="FFEB9C")
+    gfont, rfont, yfont = Font(color="006100", bold=True), Font(color="9C0006", bold=True), Font(color="9C5700", bold=True)
     cf = ws.conditional_formatting
     cf.add(f"D{R_T0 + 1}:L{R_TLAST}", FormulaRule(
         formula=[f"AND(ISNUMBER(D{R_T0 + 1}),ISNUMBER(D{R_T0}),D{R_T0 + 1}>D{R_T0})"], fill=green, font=gfont))
-    cf.add(f"A{R_T0}:C{R_TLAST}", FormulaRule(formula=[f'LEFT($M{R_T0},1)="★"'], fill=yellow))
-    cf.add(f"M{R_T0}:M{R_TLAST}", FormulaRule(formula=[f'ISNUMBER(SEARCH("★",$M{R_T0}))'], fill=yellow))
-    r3 = R_F0 + 3
-    cf.add(f"D{r3}:L{r3}", FormulaRule(formula=[f'LEFT(D{r3},1)="✓"'], fill=green, font=gfont))
-    cf.add(f"D{r3}:L{r3}", FormulaRule(formula=[f'LEFT(D{r3},1)="✗"'], fill=red, font=rfont))
-    cf.add(f"D{R_F0 + 2}:L{R_F0 + 2}", CellIsRule(operator="lessThan", formula=["0"], font=rfont))
+    cf.add(f"A{R_T0}:C{R_TLAST}", FormulaRule(formula=[f'LEFT($M{R_T0},1)="★"'], fill=fill_input))
+    cf.add(f"M{R_T0}:M{R_TLAST}", FormulaRule(formula=[f'ISNUMBER(SEARCH("★",$M{R_T0}))'], fill=fill_input))
+    cf.add(f"D{rj}:L{rj}", FormulaRule(formula=[f'D{rj}="✓(含精通)"'], fill=yellow, font=yfont))
+    cf.add(f"D{rj}:L{rj}", FormulaRule(formula=[f'LEFT(D{rj},1)="✓"'], fill=green, font=gfont))
+    cf.add(f"D{rj}:L{rj}", FormulaRule(formula=[f'LEFT(D{rj},1)="✗"'], fill=red, font=rfont))
+    cf.add(f"D{rd}:L{rd}", CellIsRule(operator="lessThan", formula=["0"], font=rfont))
+    cf.add(f"D{rb}:L{rb}", FormulaRule(formula=[f'ISNUMBER(D{rb})'], fill=yellow, font=yfont))
+    er = f"B{R_E0}:B{R_E0 + 3}"
+    cf.add(er, FormulaRule(formula=[f'ISNUMBER(SEARCH("✓",B{R_E0}))'], fill=green, font=gfont))
+    cf.add(er, FormulaRule(formula=[f'ISNUMBER(SEARCH("✗",B{R_E0}))'], fill=yellow, font=yfont))
     for r0 in (R_B0, R_O0):
-        rows = f"{r0}:{r0 + 4}"
         cf.add(f"D{r0}:L{r0 + 4}", FormulaRule(
             formula=[f'AND(D$10<>"",ISNUMBER(D{r0}),D{r0}<D$10)'], fill=red, font=Font(color="9C0006")))
         cf.add(f"B{r0}:B{r0 + 4}", FormulaRule(formula=[f'B{r0}=({ref("tgtCnt")}&"/"&{ref("tgtCnt")})'], fill=green, font=gfont))
         cf.add(f"N{r0}:N{r0 + 4}", FormulaRule(formula=[f'LEFT(N{r0},1)="✓"'], fill=green, font=gfont))
-        cf.add(f"N{r0}:N{r0 + 4}", FormulaRule(formula=[f'LEFT(N{r0},1)="✗"'], fill=red, font=rfont))
-        del rows
+        cf.add(f"N{r0}:N{r0 + 4}", FormulaRule(formula=[f'LEFT(N{r0},1)="⚠"'], fill=yellow, font=yfont))
     for r0 in (R_S0, R_M0):
         rr = f"O{r0}:O{r0 + 5}"
-        cf.add(rr, FormulaRule(formula=[f'ISNUMBER(SEARCH("✗",O{r0}))'], fill=red, font=rfont))
-        cf.add(rr, FormulaRule(formula=[f'LEFT(O{r0},2)="需练"'], fill=yellow))
+        cf.add(rr, FormulaRule(formula=[f'LEFT(O{r0},2)="需练"'], fill=yellow, font=yfont))
         cf.add(rr, FormulaRule(formula=[f'LEFT(O{r0},1)="✓"'], fill=green, font=gfont))
 
     dv_char = DataValidation(type="list", formula1=CHAR_NAMES, allow_blank=True)
@@ -1008,7 +1175,11 @@ def build_main(wb, char_cols, class_cols):
     dv_lv = DataValidation(type="whole", operator="between", formula1="1", formula2="200", allow_blank=True)
     dv_acc = DataValidation(type="whole", operator="between", formula1="0", formula2="99")
     dv_rank = DataValidation(type="list", formula1='"' + ",".join(RANKS + ["×"]) + '"', allow_blank=True)
-    for dv in (dv_char, dv_class, dv_route, dv_lv, dv_acc, dv_rank):
+    dv_type = DataValidation(type="list", formula1='"自动,物理,魔法"')
+    dv_speed = DataValidation(type="list", formula1='"自动,高速追击,低速防追"')
+    dv_front = DataValidation(type="list", formula1='"自动,是,否"')
+    dv_num = DataValidation(type="whole", operator="between", formula1="0", formula2="999", allow_blank=True)
+    for dv in (dv_char, dv_class, dv_route, dv_lv, dv_acc, dv_rank, dv_type, dv_speed, dv_front, dv_num):
         ws.add_data_validation(dv)
     dv_char.add("B4")
     dv_class.add("C9:C10")
@@ -1017,12 +1188,20 @@ def build_main(wb, char_cols, class_cols):
     dv_lv.add("B9:B10")
     dv_lv.add(f"B{R_M0 + 1}:B{R_M0 + 5}")
     dv_lv.add("E14:H14")
-    dv_acc.add("B14")
     dv_lv.add("B13")
+    dv_lv.add("I13")
+    dv_acc.add("B14")
     dv_rank.add(f"B{R_WCUR}:M{R_WCUR}")
+    dv_type.add("O9")
+    dv_speed.add("O10")
+    dv_front.add("O11")
+    dv_num.add("O4:O8")
+    dv_num.add("O12")
 
     ws.freeze_panes = "A7"
     ws.column_dimensions.group("Q", CL(LAST_HELPER), hidden=True)
+    for name, r_ in defnames.items():
+        wb.defined_names[name] = DefinedName(name, attr_text=f"'{SH_MAIN}'!{r_}")
     return ws
 
 
